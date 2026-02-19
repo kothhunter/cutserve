@@ -15,7 +15,7 @@ export default defineConfig({
             outDir: 'dist-electron',
             minify: false,
             rollupOptions: {
-              external: ['electron', 'keytar'],
+              external: ['electron', 'keytar', 'electron-updater'],
               output: {
                 format: 'es',
               },

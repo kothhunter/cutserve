@@ -13,10 +13,12 @@
     "postinstall": "electron-builder install-app-deps",
     "build:python": "cd python && bash build.sh",
     "build:icons": "bash build/generate-icons.sh",
-    "build:all": "npm run build:icons && npm run build:python && npm run build"
+    "build:all": "npm run build:icons && npm run build:python && npm run build",
+    "release": "npm run build:icons && npm run build:python && vite build && node build-preload.js && electron-builder --publish always"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.96.0",
+    "electron-updater": "^6.8.3",
     "html-to-image": "^1.11.13",
     "keytar": "^7.9.0",
     "react": "^18.3.1",
@@ -52,7 +54,12 @@
       {
         "from": "python/dist/",
         "to": "python/",
-        "filter": ["roundnet-engine", "roundnet-engine.exe", "roundnet-renderer", "roundnet-renderer.exe"]
+        "filter": [
+          "roundnet-engine",
+          "roundnet-engine.exe",
+          "roundnet-renderer",
+          "roundnet-renderer.exe"
+        ]
       },
       {
         "from": "yolov8n-pose.pt",
@@ -68,7 +75,10 @@
       }
     ],
     "mac": {
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "icon": "build/icon.icns",
       "category": "public.app-category.video"
     },
@@ -83,14 +93,28 @@
     "dmg": {
       "title": "CutServe",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ]
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "kothhunter",
+      "repo": "cutserve",
+      "private": true
     }
   }
 }

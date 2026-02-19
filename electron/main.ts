@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, shell, dialog } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs/promises'
 import { existsSync, createReadStream } from 'fs'
+import { autoUpdater } from 'electron-updater'
 import { PythonRunner } from './python-runner'
 import { ProjectManager } from './project-manager'
 import { authService } from './auth-service'
@@ -349,4 +350,36 @@ app.whenReady().then(async () => {
   await projectManager.init()
   await authService.restoreSession()
   createWindow()
+
+  // ── Auto-update (production only) ────────────────────────────────
+  if (app.isPackaged) {
+    autoUpdater.logger = console
+    autoUpdater.autoDownload = false
+
+    autoUpdater.on('update-available', (info) => {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'Update Available',
+        message: `CutServe v${info.version} is available. Would you like to download it now?`,
+        buttons: ['Download', 'Later'],
+      }).then(({ response }) => {
+        if (response === 0) autoUpdater.downloadUpdate()
+      })
+    })
+
+    autoUpdater.on('update-downloaded', () => {
+      dialog.showMessageBox(mainWindow!, {
+        type: 'info',
+        title: 'Update Ready',
+        message: 'Update downloaded. The app will restart to install it.',
+        buttons: ['Restart Now', 'Later'],
+      }).then(({ response }) => {
+        if (response === 0) autoUpdater.quitAndInstall()
+      })
+    })
+
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.log('[AutoUpdate] Check failed (expected if no releases yet):', err.message)
+    })
+  }
 })

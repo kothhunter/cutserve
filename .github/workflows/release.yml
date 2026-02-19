@@ -20,18 +20,21 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Install Python dependencies
+        working-directory: python
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
       - name: Download model weights
         run: |
           if [ ! -f yolov8n-pose.pt ]; then
             python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
           fi
 
-      - name: Install Python dependencies and build binaries
+      - name: Build PyInstaller binaries
         working-directory: python
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
-          pyinstaller --clean --noconfirm roundnet-engine.spec
+        run: pyinstaller --clean --noconfirm roundnet-engine.spec
 
       - name: Install npm dependencies
         run: npm ci

@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global scrollbar (light panels) ───────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f5f1ed;
+}
+::-webkit-scrollbar-thumb {
+  background: #dad2bc;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a99985;
+}
+
+/* ── Filmstrip horizontal scrollbar ────────────────────────────── */
+.filmstrip-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+.filmstrip-scroll::-webkit-scrollbar-track {
+  background: #f5f1ed;
+  border-radius: 3px;
+}
+.filmstrip-scroll::-webkit-scrollbar-thumb {
+  background: #dad2bc;
+  border-radius: 3px;
+}
+.filmstrip-scroll::-webkit-scrollbar-thumb:hover {
+  background: #a99985;
+}
+
+/* ── Export-page dark scrollbar ─────────────────────────────────── */
+.dark-scroll::-webkit-scrollbar-track {
+  background: #1a1818;
+}
+.dark-scroll::-webkit-scrollbar-thumb {
+  background: #3d3a3a;
+  border-radius: 3px;
+}
+.dark-scroll::-webkit-scrollbar-thumb:hover {
+  background: #a99985;
+}
+
+/* ── Electron drag region for custom title bar ──────────────────── */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}

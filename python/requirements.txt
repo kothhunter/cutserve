@@ -1,0 +1,14 @@
+# Roundnet Condenser Dependencies
+# Install with: pip install -r requirements.txt
+# Pinned from working dev environment to prevent build breakage.
+
+# Computer Vision
+opencv-python==4.10.0.84
+numpy==1.26.4
+
+# AI/ML - Pose Detection (YOLO)
+ultralytics==8.4.11
+torch==2.10.0
+
+# Note: PyTorch with MPS support is automatically installed via ultralytics
+# For Apple Silicon (M1/M2/M3), MPS acceleration is enabled by default

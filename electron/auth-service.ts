@@ -1,5 +1,10 @@
 import { createClient, SupabaseClient, Session } from '@supabase/supabase-js'
 import keytar from 'keytar'
+import { createHash, randomUUID } from 'crypto'
+import { execSync } from 'child_process'
+import { app } from 'electron'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { join } from 'path'
 
 const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
@@ -8,6 +13,8 @@ const KEYTAR_SERVICE = 'com.cutserve.app'
 const KEYTAR_ACCOUNT = 'supabase-session'
 
 const FREE_EXPORT_LIMIT = 3
+const MAX_DEVICES_PER_ACCOUNT = 3
+const DEVICE_ACTIVE_DAYS = 30
 
 export interface UserProfile {
   id: string
@@ -20,6 +27,7 @@ export interface UserProfile {
 export class AuthService {
   private supabase: SupabaseClient | null = null
   private currentSession: Session | null = null
+  private cachedDeviceId: string | null = null
 
   constructor() {
     if (SUPABASE_URL && SUPABASE_ANON_KEY) {
@@ -107,6 +115,42 @@ export class AuthService {
     return this.currentSession !== null
   }
 
+  // ── Device Fingerprinting ─────────────────────────────────────────
+
+  async getDeviceId(): Promise<string> {
+    if (this.cachedDeviceId) return this.cachedDeviceId
+
+    let rawId: string | null = null
+
+    try {
+      if (process.platform === 'darwin') {
+        const output = execSync('ioreg -rd1 -c IOPlatformExpertDevice', { encoding: 'utf-8' })
+        const match = output.match(/"IOPlatformUUID"\s*=\s*"([^"]+)"/)
+        if (match) rawId = match[1]
+      } else if (process.platform === 'win32') {
+        const output = execSync('reg query HKLM\\SOFTWARE\\Microsoft\\Cryptography /v MachineGuid', { encoding: 'utf-8' })
+        const match = output.match(/MachineGuid\s+REG_SZ\s+(\S+)/)
+        if (match) rawId = match[1]
+      }
+    } catch (err) {
+      console.warn('[Auth] Failed to read hardware ID:', err)
+    }
+
+    // Fallback: persist a generated UUID to userData
+    if (!rawId) {
+      const fallbackPath = join(app.getPath('userData'), 'device-id')
+      if (existsSync(fallbackPath)) {
+        rawId = readFileSync(fallbackPath, 'utf-8').trim()
+      } else {
+        rawId = randomUUID()
+        writeFileSync(fallbackPath, rawId, 'utf-8')
+      }
+    }
+
+    this.cachedDeviceId = createHash('sha256').update(rawId).digest('hex')
+    return this.cachedDeviceId
+  }
+
   // ── Profile & Freemium ────────────────────────────────────────────
 
   async getProfile(): Promise<UserProfile | null> {
@@ -126,43 +170,72 @@ export class AuthService {
     return data as UserProfile
   }
 
-  async canExport(): Promise<{ allowed: boolean; used: number; limit: number }> {
+  async canExport(): Promise<{ allowed: boolean; used: number; limit: number; reason?: string }> {
     if (!this.supabase) return { allowed: true, used: 0, limit: -1 }
     const profile = await this.getProfile()
     if (!profile) return { allowed: false, used: 0, limit: FREE_EXPORT_LIMIT }
 
-    // Paid plans have unlimited exports
+    const deviceId = await this.getDeviceId()
+
+    // Paid plans: unlimited exports but limited to 3 devices
     if (profile.plan === 'pro' || profile.plan === 'lifetime') {
+      const cutoff = new Date(Date.now() - DEVICE_ACTIVE_DAYS * 24 * 60 * 60 * 1000).toISOString()
+      const { data: devices } = await this.supabase
+        .from('user_devices')
+        .select('device_id')
+        .eq('user_id', profile.id)
+        .gte('last_seen_at', cutoff)
+
+      const activeDevices = devices ?? []
+      const thisDeviceRegistered = activeDevices.some(d => d.device_id === deviceId)
+
+      if (!thisDeviceRegistered && activeDevices.length >= MAX_DEVICES_PER_ACCOUNT) {
+        return {
+          allowed: false,
+          used: activeDevices.length,
+          limit: MAX_DEVICES_PER_ACCOUNT,
+          reason: 'device_limit',
+        }
+      }
+
       return { allowed: true, used: profile.exports_this_month, limit: -1 }
     }
 
-    // Check if the monthly counter needs to be reset
-    const resetAt = new Date(profile.exports_reset_at)
-    if (new Date() >= resetAt) {
-      const newResetAt = new Date()
-      newResetAt.setMonth(newResetAt.getMonth() + 1)
-      await this.supabase
-        .from('profiles')
-        .update({ exports_this_month: 0, exports_reset_at: newResetAt.toISOString() })
-        .eq('id', profile.id)
-      return { allowed: true, used: 0, limit: FREE_EXPORT_LIMIT }
+    // Free plans: check device-level export limit
+    const { data } = await this.supabase
+      .from('device_exports')
+      .select('exports_this_month, reset_at')
+      .eq('device_id', deviceId)
+      .single()
+
+    let deviceUsed = 0
+    if (data) {
+      const resetAt = new Date(data.reset_at)
+      if (new Date() >= resetAt) {
+        await this.supabase
+          .from('device_exports')
+          .update({ exports_this_month: 0, reset_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() })
+          .eq('device_id', deviceId)
+        deviceUsed = 0
+      } else {
+        deviceUsed = data.exports_this_month
+      }
     }
 
-    const allowed = profile.exports_this_month < FREE_EXPORT_LIMIT
-    return { allowed, used: profile.exports_this_month, limit: FREE_EXPORT_LIMIT }
+    const allowed = deviceUsed < FREE_EXPORT_LIMIT
+    return { allowed, used: deviceUsed, limit: FREE_EXPORT_LIMIT }
   }
 
   async recordExport(): Promise<void> {
     if (!this.supabase || !this.currentSession) return
 
+    // Increment per-user counter (for analytics)
     try {
-      // Uses the increment_export_count SQL function (SECURITY DEFINER)
       const { error } = await this.supabase.rpc('increment_export_count', {
         user_id: this.currentSession.user.id,
       })
       if (error) throw error
     } catch {
-      // Fallback: manual increment if the RPC function isn't available
       const profile = await this.getProfile()
       if (profile) {
         await this.supabase
@@ -170,6 +243,30 @@ export class AuthService {
           .update({ exports_this_month: profile.exports_this_month + 1 })
           .eq('id', this.currentSession.user.id)
       }
+    }
+
+    // Increment per-device counter (for enforcement)
+    try {
+      const deviceId = await this.getDeviceId()
+      const { error } = await this.supabase.rpc('increment_device_export', {
+        p_device_id: deviceId,
+      })
+      if (error) throw error
+    } catch (err) {
+      console.error('[Auth] Failed to record device export:', err)
+    }
+
+    // Track device for this account (for paid account sharing limits)
+    try {
+      const deviceId = await this.getDeviceId()
+      await this.supabase
+        .from('user_devices')
+        .upsert(
+          { user_id: this.currentSession.user.id, device_id: deviceId, last_seen_at: new Date().toISOString() },
+          { onConflict: 'user_id,device_id' }
+        )
+    } catch (err) {
+      console.error('[Auth] Failed to track user device:', err)
     }
   }
 }

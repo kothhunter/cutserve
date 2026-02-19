@@ -21,9 +21,9 @@ const FONT_OPTIONS = [
 
 /** Overlay image paths for each variant (in public/overlays/) */
 const OVERLAY_PATHS: Record<Variant, string> = {
-  'top-middle': '/overlays/top-middle.png',
-  'top-corners': '/overlays/top-corners.png',
-  stacked: '/overlays/stacked.png',
+  'top-middle': 'overlays/top-middle.png',
+  'top-corners': 'overlays/top-corners.png',
+  stacked: 'overlays/stacked.png',
 }
 
 interface LogoConfig {
@@ -152,6 +152,8 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const [activeTab, setActiveTab] = useState<'overlay' | 'stat' | 'export'>('overlay')
   const [previewMode, setPreviewMode] = useState<'live' | 'stat'>('live')
   const [exporting, setExporting] = useState(false)
+  const [exportProgress, setExportProgress] = useState(0)
+  const exportStartRef = useRef<number>(0)
   const [exportError, setExportError] = useState<string | null>(null)
   const [isCapturingStatScreen, setIsCapturingStatScreen] = useState(false)
   const [previewScale, setPreviewScale] = useState(1)
@@ -159,13 +161,29 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const statCaptureRef = useRef<HTMLDivElement>(null)
   const previewContainerRef = useRef<HTMLDivElement>(null)
 
+  // Simulated export progress — eases toward 90% over ~5 min, jumps to 100% on completion
+  useEffect(() => {
+    if (!exporting) {
+      setExportProgress(0)
+      return
+    }
+    exportStartRef.current = Date.now()
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - exportStartRef.current) / 1000
+      // Asymptotic curve: reaches ~90% at 5 min (300s), never hits 100
+      const progress = Math.min(90, 90 * (1 - Math.exp(-elapsed / 120)))
+      setExportProgress(Math.round(progress))
+    }, 500)
+    return () => clearInterval(interval)
+  }, [exporting])
+
   const stats = calculateStats(matchSetup, clips, matchFlow)
   const players = [...matchSetup.team1.players, ...matchSetup.team2.players]
 
   // Generate @font-face CSS for bundled fonts (preview uses these via public/ paths)
   const fontFaceCss = FONT_OPTIONS.map((f) => `
-    @font-face { font-family: '${f.label}'; font-weight: 400; src: url('/fonts/${f.regular}') format('truetype'); }
-    @font-face { font-family: '${f.label}'; font-weight: 700; src: url('/fonts/${f.bold}') format('truetype'); }
+    @font-face { font-family: '${f.label}'; font-weight: 400; src: url('fonts/${f.regular}') format('truetype'); }
+    @font-face { font-family: '${f.label}'; font-weight: 700; src: url('fonts/${f.bold}') format('truetype'); }
   `).join('\n')
 
   useEffect(() => {
@@ -277,7 +295,6 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
       return
     }
 
-    setExporting(true)
     setExportError(null)
 
     try {
@@ -413,11 +430,11 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
       const defaultPath = `${projectDir}/${project.name}_broadcast.mp4`
       const outputPath = await window.api.showSaveHighlightsDialog(defaultPath)
       if (!outputPath) {
-        setExporting(false)
         return
       }
 
       // 7. Start render
+      setExporting(true)
       const clipsPath = `${projectDir}/clips.json`
       const result = await window.api.renderHighlights({
         projectId: project.id,
@@ -431,7 +448,9 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
         throw new Error(result.message)
       }
 
-      const onComplete = (data: { outputPath: string }) => {
+      const onComplete = async (data: { outputPath: string }) => {
+        await window.api.auth.recordExport()
+        setExportProgress(100)
         setExporting(false)
         setExportError(null)
         alert(`Export complete!\n\nSaved to: ${data.outputPath}`)
@@ -1114,13 +1133,26 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                     <option value="1080p">1080p</option>
                   </select>
                 </div>
-                <button
-                  className="w-full px-4 py-3 bg-rc-accent hover:bg-rc-accent-hover text-white font-semibold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  onClick={handleExportStudio}
-                  disabled={exporting}
-                >
-                  {exporting ? 'Exporting...' : 'Export Studio'}
-                </button>
+                {exporting ? (
+                  <div className="space-y-2">
+                    <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                      <div
+                        className="h-full bg-rc-accent rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${exportProgress}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-gray-400 text-center">
+                      Exporting… {exportProgress}% — this usually takes 5–10 minutes
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    className="w-full px-4 py-3 bg-rc-accent hover:bg-rc-accent-hover text-white font-semibold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={handleExportStudio}
+                  >
+                    Export Studio
+                  </button>
+                )}
                 {exportError && (
                   <p className="text-xs text-red-400 mt-2">{exportError}</p>
                 )}

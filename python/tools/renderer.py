@@ -70,6 +70,32 @@ def find_ffprobe() -> str:
     return str(ffprobe)
 
 
+MAX_OUTPUT_FPS = 60
+
+
+def get_video_fps(video_path: Path, ffprobe: str) -> float:
+    """Return the frame rate of the first video stream, capped at MAX_OUTPUT_FPS."""
+    result = subprocess.run(
+        [ffprobe, "-v", "quiet", "-select_streams", "v:0",
+         "-print_format", "json", "-show_streams", str(video_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        data = json.loads(result.stdout)
+        for s in data.get("streams", []):
+            # r_frame_rate is like "30/1" or "30000/1001"
+            rfr = s.get("r_frame_rate", "")
+            if "/" in rfr:
+                num, den = rfr.split("/", 1)
+                try:
+                    source_fps = float(num) / float(den)
+                    if source_fps > 0:
+                        return round(min(source_fps, MAX_OUTPUT_FPS), 3)
+                except (ValueError, ZeroDivisionError):
+                    pass
+    return 30.0
+
+
 def has_audio_stream(video_path: Path, ffprobe: str) -> bool:
     """Return True if the file has at least one audio stream."""
     result = subprocess.run(
@@ -213,6 +239,7 @@ def _run_encode(
     filter_complex: str,
     output_path: Path,
     has_audio: bool,
+    fps: float = 30.0,
 ) -> tuple[bool, str]:
     """Run ffmpeg encode with given inputs and filter_complex."""
     on_mac = platform.system() == "Darwin"
@@ -221,6 +248,7 @@ def _run_encode(
         encoders_to_try.append(("h264_videotoolbox", ["-c:v", "h264_videotoolbox"]))
     encoders_to_try.append(("libx264", ["-c:v", "libx264", "-preset", "fast", "-crf", "23"]))
 
+    fps_str = str(fps)
     last_err = ""
     for name, video_codec_args in encoders_to_try:
         cmd = [ffmpeg, "-y"]
@@ -228,7 +256,7 @@ def _run_encode(
             cmd.extend(["-i", inp])
         cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]", "-map", "[outa]"])
         cmd.extend(video_codec_args)
-        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)])
+        cmd.extend(["-r", fps_str, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)])
         ok, err = run_ffmpeg(cmd)
         if ok:
             return True, err
@@ -262,6 +290,8 @@ def render_highlights(
     video_abs = video_path.resolve()
     output_abs = output_path.resolve()
     has_audio = has_audio_stream(video_abs, ffprobe)
+    fps = get_video_fps(video_abs, ffprobe)
+    print(f"Source video frame rate: {fps} fps")
 
     cfg = config or {}
     show_overlay = cfg.get("showOverlay", False)
@@ -326,8 +356,8 @@ def render_highlights(
             start = round(float(clip["start"]), 3)
             end = round(float(clip["end"]), 3)
             dur = round(end - start, 3)
-            # Trim video segment
-            trim = f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS"
+            # Trim video segment (fps filter normalises high-fps sources like 120fps)
+            trim = f"[0:v]trim=start={start}:end={end},setpts=PTS-STARTPTS,fps={fps}"
             if scale:
                 trim += f",{scale.rstrip(',')}"
             trim += f"[vb{i}]"
@@ -335,7 +365,7 @@ def render_highlights(
 
             if has_overlay_img:
                 parts.append(
-                    f"[{overlay_idx}:v]scale={w}:{h},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[ov{i}]"
+                    f"[{overlay_idx}:v]fps={fps},scale={w}:{h},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[ov{i}]"
                 )
                 parts.append(f"[vb{i}][ov{i}]overlay=0:0[vo{i}]")
                 last_label = f"[vo{i}]"
@@ -351,7 +381,7 @@ def render_highlights(
                 lx = int(round(cx - lw / 2))
                 ly = int(round(cy - lh / 2))
                 parts.append(
-                    f"[{logo1_idx}:v]scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg1{i}]"
+                    f"[{logo1_idx}:v]fps={fps},scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg1{i}]"
                 )
                 parts.append(f"{last_label}[lg1{i}]overlay={lx}:{ly}[vl1{i}]")
                 last_label = f"[vl1{i}]"
@@ -363,7 +393,7 @@ def render_highlights(
                 lx = int(round(cx - lw / 2))
                 ly = int(round(cy - lh / 2))
                 parts.append(
-                    f"[{logo2_idx}:v]scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg2{i}]"
+                    f"[{logo2_idx}:v]fps={fps},scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg2{i}]"
                 )
                 parts.append(f"{last_label}[lg2{i}]overlay={lx}:{ly}[vl2{i}]")
                 last_label = f"[vl2{i}]"
@@ -401,7 +431,7 @@ def render_highlights(
     filter_complex = build_filter(use_drawtext)
 
     def try_encode(out_path: Path) -> tuple[bool, str]:
-        return _run_encode(ffmpeg, inputs, filter_complex, out_path, has_audio)
+        return _run_encode(ffmpeg, inputs, filter_complex, out_path, has_audio, fps)
 
     if has_stat:
         # Two-pass: render clips first, then concat with stat screen
@@ -420,7 +450,7 @@ def render_highlights(
             if not ok and use_drawtext and "No such filter" in err:
                 print("Note: FFmpeg lacks drawtext (needs libfreetype). Exporting without score text.")
                 filter_complex = build_filter(False)
-                ok, err = _run_encode(ffmpeg, inputs, filter_complex, temp_mp4, has_audio)
+                ok, err = _run_encode(ffmpeg, inputs, filter_complex, temp_mp4, has_audio, fps)
             if not ok:
                 raise RuntimeError(f"Encode failed.\nffmpeg stderr:\n{err}\n\nFilter (first 500 chars): {filter_complex[:500]}{'...' if len(filter_complex) > 500 else ''}")
 
@@ -434,11 +464,12 @@ def render_highlights(
                 stat_filter = f"loop=-1:1,trim=duration={stat_dur_str},setpts=PTS-STARTPTS"
                 if is_720p:
                     stat_filter = f"scale={w}:{h}," + stat_filter
+                fps_str = str(fps)
                 stat_cmd = [
-                    ffmpeg, "-y", "-loop", "1", "-r", "30", "-i", str(stat_abs),
+                    ffmpeg, "-y", "-loop", "1", "-r", fps_str, "-i", str(stat_abs),
                     "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={stat_dur_str}",
                     "-vf", stat_filter, "-map", "0:v", "-map", "1:a",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", fps_str,
                     "-c:a", "aac", "-b:a", "192k",
                     "-t", stat_dur_str,
                     "-movflags", "+faststart", str(stat_mp4)
@@ -467,7 +498,7 @@ def render_highlights(
         finally:
             temp_mp4.unlink(missing_ok=True)
     else:
-        ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio)
+        ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps)
         if not ok:
             print("--- FFmpeg encode error (full stderr) ---")
             print(err)
@@ -479,7 +510,7 @@ def render_highlights(
         if not ok and use_drawtext and "No such filter" in err:
             print("Note: FFmpeg lacks drawtext (needs libfreetype). Exporting without score text.")
             filter_complex = build_filter(False)
-            ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio)
+            ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps)
         if not ok:
             raise RuntimeError(f"Encode failed.\nffmpeg stderr:\n{err}\n\nFilter (first 500 chars): {filter_complex[:500]}{'...' if len(filter_complex) > 500 else ''}")
 

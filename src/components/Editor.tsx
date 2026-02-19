@@ -82,6 +82,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
   const [showUpgradeModal,  setShowUpgradeModal]      = useState(false)
   const [exportUsed,        setExportUsed]            = useState(0)
   const [exportLimit,       setExportLimit]           = useState(3)
+  const [exportDenyReason,  setExportDenyReason]      = useState<string | undefined>()
   const [showSettingsModal, setShowSettingsModal]     = useState(false)
 
   // Collapsible right-panel sections
@@ -286,6 +287,10 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
   // ── Keyboard Shortcuts ──────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    // Don't intercept keys when user is typing in an input field
+    const tag = (e.target as HTMLElement)?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
     const key   = e.key.toLowerCase()
     const shift = e.shiftKey
 
@@ -387,6 +392,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
     if (!result.allowed) {
       setExportUsed(result.used)
       setExportLimit(result.limit)
+      setExportDenyReason(result.reason)
       setShowUpgradeModal(true)
       return false
     }
@@ -560,7 +566,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
         </div>
 
         {/* ── Right: Stats + Clipping panels (~32%) ───────────── */}
-        <div className="w-72 flex-shrink-0 border-l border-cut-warm/40 bg-white flex flex-col overflow-hidden">
+        <div className="w-72 flex-shrink-0 border-l border-cut-warm/40 bg-white flex flex-col overflow-hidden relative">
 
           {/* ── Stats panel ──────────────────────────────── */}
           <div className="flex-shrink-0 border-b border-cut-warm/30">
@@ -717,6 +723,76 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
               </div>
             )}
           </div>
+
+          {/* ═══ Player Overlay Modal ══════════════════════════════════ */}
+          {showPlayerOverlay && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/80" onClick={handlePlayerOverlayCancel}>
+              <div className="bg-white border border-cut-warm/40 rounded-2xl p-4 w-64 shadow-2xl" onClick={e => e.stopPropagation()}>
+                <div className="text-sm font-semibold text-cut-deep mb-2">
+                  {playerOverlayStat === 'error'
+                    ? `Select player for ${getStatLabel(playerOverlayStat)}`
+                    : playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold'
+                      ? `Add touches (${getStatLabel(playerOverlayStat)})`
+                      : `Select players for ${playerOverlayStat ? getStatLabel(playerOverlayStat) : ''}`}
+                </div>
+                {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && (
+                  <p className="text-xs text-cut-mid mb-2">Click to add each touch. Last touch = point.</p>
+                )}
+                {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && selectedPlayers.length > 0 && (
+                  <div className="mb-2 flex items-center gap-1 flex-wrap">
+                    <span className="text-xs text-cut-mid">Seq:</span>
+                    <span className="text-xs font-mono text-cut-deep">
+                      {selectedPlayers.map((id, i) => (
+                        <span key={`${id}-${i}`}>
+                          {i > 0 && ' → '}
+                          {matchSetup?.team1.players.find(p => p.id === id)?.name ?? matchSetup?.team2.players.find(p => p.id === id)?.name ?? id}
+                          {i === selectedPlayers.length - 1 && ' (pt)'}
+                        </span>
+                      ))}
+                    </span>
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
+                  {(['A', 'B', 'C', 'D'] as const).map((playerId) => {
+                    const playerName = matchSetup?.team1.players.find(p => p.id === playerId)?.name ?? matchSetup?.team2.players.find(p => p.id === playerId)?.name ?? `Player ${playerId}`
+                    return (
+                      <button
+                        key={playerId}
+                        onClick={() => togglePlayer(playerId)}
+                        className={`px-2 py-2 rounded-lg transition-colors font-medium text-xs ${
+                          playerOverlayStat === 'error' && selectedPlayers.includes(playerId)
+                            ? 'bg-cut-deep text-cut-base'
+                            : 'bg-cut-base text-cut-deep hover:bg-cut-warm/40 border border-cut-warm/40'
+                        }`}
+                      >
+                        {playerId}: {playerName}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex justify-between gap-1">
+                  <div>
+                    {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && selectedPlayers.length > 0 && (
+                      <button onClick={removeLastTouch} className="px-2 py-1.5 text-xs text-cut-mid hover:text-cut-deep transition-colors">
+                        ← Undo
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex gap-1 ml-auto">
+                    <button onClick={handlePlayerOverlayCancel} className="px-2 py-1.5 text-xs text-cut-mid hover:text-cut-deep transition-colors rounded-lg">Cancel</button>
+                    <button
+                      onClick={handlePlayerOverlayConfirm}
+                      disabled={selectedPlayers.length === 0}
+                      className="px-3 py-1.5 text-xs bg-cut-deep hover:bg-cut-deep/90 text-cut-base rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                    >
+                      Confirm
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -806,74 +882,6 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
         )}
       </div>
 
-      {/* ═══ Player Overlay Modal ══════════════════════════════════ */}
-      {showPlayerOverlay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={handlePlayerOverlayCancel}>
-          <div className="bg-white border border-cut-warm/40 rounded-2xl p-6 w-96 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="text-base font-semibold text-cut-deep mb-2">
-              {playerOverlayStat === 'error'
-                ? `Select player for ${getStatLabel(playerOverlayStat)}`
-                : playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold'
-                  ? `Add touches in order (${getStatLabel(playerOverlayStat)})`
-                  : `Select players for ${playerOverlayStat ? getStatLabel(playerOverlayStat) : ''}`}
-            </div>
-            {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && (
-              <p className="text-sm text-cut-mid mb-3">Click to add each touch. Last touch = player who got the point. Same player can appear multiple times.</p>
-            )}
-            {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && selectedPlayers.length > 0 && (
-              <div className="mb-3 flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-cut-mid">Sequence:</span>
-                <span className="text-sm font-mono text-cut-deep">
-                  {selectedPlayers.map((id, i) => (
-                    <span key={`${id}-${i}`}>
-                      {i > 0 && ' → '}
-                      {matchSetup?.team1.players.find(p => p.id === id)?.name ?? matchSetup?.team2.players.find(p => p.id === id)?.name ?? id}
-                      {i === selectedPlayers.length - 1 && ' (point)'}
-                    </span>
-                  ))}
-                </span>
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {(['A', 'B', 'C', 'D'] as const).map((playerId) => {
-                const playerName = matchSetup?.team1.players.find(p => p.id === playerId)?.name ?? matchSetup?.team2.players.find(p => p.id === playerId)?.name ?? `Player ${playerId}`
-                return (
-                  <button
-                    key={playerId}
-                    onClick={() => togglePlayer(playerId)}
-                    className={`px-4 py-3 rounded-xl transition-colors font-medium text-sm ${
-                      playerOverlayStat === 'error' && selectedPlayers.includes(playerId)
-                        ? 'bg-cut-deep text-cut-base'
-                        : 'bg-cut-base text-cut-deep hover:bg-cut-warm/40 border border-cut-warm/40'
-                    }`}
-                  >
-                    {playerId}: {playerName}
-                  </button>
-                )
-              })}
-            </div>
-            <div className="flex justify-between gap-2">
-              <div>
-                {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && selectedPlayers.length > 0 && (
-                  <button onClick={removeLastTouch} className="px-4 py-2 text-sm text-cut-mid hover:text-cut-deep transition-colors">
-                    ← Undo last
-                  </button>
-                )}
-              </div>
-              <div className="flex gap-2 ml-auto">
-                <button onClick={handlePlayerOverlayCancel} className="px-4 py-2 text-sm text-cut-mid hover:text-cut-deep transition-colors rounded-lg">Cancel</button>
-                <button
-                  onClick={handlePlayerOverlayConfirm}
-                  disabled={selectedPlayers.length === 0}
-                  className="px-4 py-2 text-sm bg-cut-deep hover:bg-cut-deep/90 text-cut-base rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-                >
-                  Confirm
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══ Keybinds Modal ════════════════════════════════════════ */}
       {showKeybindsModal && (
@@ -927,6 +935,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
         <UpgradeModal
           used={exportUsed}
           limit={exportLimit}
+          reason={exportDenyReason}
           onClose={() => setShowUpgradeModal(false)}
         />
       )}

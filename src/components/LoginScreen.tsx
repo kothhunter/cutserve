@@ -9,6 +9,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
   const [mode, setMode]       = useState<'login' | 'register'>('login')
   const [email, setEmail]     = useState('')
   const [password, setPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError]     = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [registered, setRegistered] = useState(false)
@@ -20,6 +21,11 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
 
     try {
       if (mode === 'register') {
+        if (password !== confirmPassword) {
+          setError('Passwords do not match')
+          setLoading(false)
+          return
+        }
         const result = await window.api.auth.register(email, password)
         if (!result.success) {
           setError(result.error ?? 'Registration failed')
@@ -113,6 +119,23 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
               />
             </div>
 
+            {mode === 'register' && (
+              <div>
+                <label className="block text-xs font-semibold text-cut-mid uppercase tracking-wide mb-1.5">
+                  Confirm Password
+                </label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={e => setConfirmPassword(e.target.value)}
+                  placeholder="Re-enter your password"
+                  required
+                  minLength={8}
+                  className={inputCls}
+                />
+              </div>
+            )}
+
             {error && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
                 {error}
@@ -135,7 +158,7 @@ export function LoginScreen({ onAuthenticated }: LoginScreenProps) {
         <p className="text-center text-sm text-cut-mid mt-5">
           {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
           <button
-            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null) }}
+            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(null); setConfirmPassword('') }}
             className="text-cut-deep font-semibold hover:underline"
           >
             {mode === 'login' ? 'Sign up' : 'Sign in'}

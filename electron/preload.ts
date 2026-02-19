@@ -92,7 +92,7 @@ export interface RoundnetAPI {
       exports_this_month: number
       exports_reset_at: string
     } | null>
-    canExport: () => Promise<{ allowed: boolean; used: number; limit: number }>
+    canExport: () => Promise<{ allowed: boolean; used: number; limit: number; reason?: string }>
     recordExport: () => Promise<void>
   }
 

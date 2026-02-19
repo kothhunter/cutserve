@@ -7,11 +7,10 @@ on:
 
 jobs:
   build-python:
-    # Build PyInstaller binaries for each architecture
     strategy:
       matrix:
         include:
-          - os: macos-14        # arm64 (M1+ runner)
+          - os: macos-14        # arm64 (Apple Silicon runner)
             arch: arm64
           - os: macos-13        # x64 (Intel runner)
             arch: x64
@@ -31,7 +30,6 @@ jobs:
 
       - name: Download model weights
         run: |
-          # Download YOLOv8n-pose if not present (gitignored)
           if [ ! -f yolov8n-pose.pt ]; then
             python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
           fi
@@ -96,9 +94,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          vite build
+          npx vite build
           node build-preload.js
-          electron-builder --publish always --${{ matrix.arch }}
-
-  # After both arch builds are done, the GitHub Release will have
-  # both arm64 and x64 DMGs. Publish it manually or use the API.
+          npx electron-builder --publish always --arch ${{ matrix.arch }}

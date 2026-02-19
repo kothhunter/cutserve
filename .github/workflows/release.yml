@@ -51,6 +51,8 @@ jobs:
       - name: Build and publish Electron app
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           npx vite build
           node build-preload.js

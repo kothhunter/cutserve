@@ -10,14 +10,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - runner: macos-14
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -63,4 +56,4 @@ jobs:
         run: |
           npx vite build
           node build-preload.js
-          npx electron-builder --publish always --${{ matrix.arch }}
+          npx electron-builder --publish always --arm64

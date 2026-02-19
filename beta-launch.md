@@ -24,20 +24,19 @@ Thanks for joining the CutServe beta! This guide will walk you through downloadi
 
 **Requirements:**
 - macOS 12 (Monterey) or later
-- Apple Silicon (M1, M2, M3, M4) or Intel Mac
+- Apple Silicon Mac (M1, M2, M3, M4) — Intel Macs are not supported in this beta
 - At least 4 GB of free disk space
-- A roundnet match video file (.mp4 recommended)
+- A roundnet match video file (.mp4 only)
 
 ---
 
 #### Step 1: Download
 
-Download the version that matches your Mac:
+Download the latest version of CutServe:
 
-- **Apple Silicon (M1, M2, M3, M4):** [Download CutServe Beta (Apple Silicon)](DOWNLOAD_LINK_ARM64)
-- **Intel Mac:** [Download CutServe Beta (Intel)](DOWNLOAD_LINK_X64)
+**[Download CutServe Beta (macOS)](DOWNLOAD_LINK)**
 
-> **Not sure which one?** Click the Apple menu () > **About This Mac**. If it says "Chip: Apple M1/M2/M3/M4" download Apple Silicon. If it says "Processor: Intel" download Intel.
+> **Important:** This beta requires an Apple Silicon Mac (M1, M2, M3, or M4). To check, click the Apple menu () > **About This Mac** — it should say "Chip: Apple M1/M2/M3/M4". Intel Macs are not supported at this time.
 
 ---
 
@@ -51,8 +50,9 @@ Download the version that matches your Mac:
 
 #### Step 3: First Launch (Important!)
 
-Because CutServe is in beta and not yet signed with an Apple certificate, macOS will block it the first time. Here's how to open it:
+Because CutServe is in beta and not yet signed with an Apple certificate, macOS will block it the first time. Use **either** option below to open it:
 
+**Option A: System Settings**
 1. Open **Applications** in Finder and double-click **CutServe**
 2. You'll see a warning: *"CutServe can't be opened because Apple cannot check it for malicious software."* — click **Done** (not Move to Trash)
 3. Open **System Settings** > **Privacy & Security**
@@ -60,6 +60,15 @@ Because CutServe is in beta and not yet signed with an Apple certificate, macOS 
 5. Click **Open Anyway**
 6. Enter your password if prompted
 7. Click **Open** on the final confirmation dialog
+
+**Option B: Terminal (use this if Option A doesn't show the "Open Anyway" button)**
+1. Open **Terminal** (search for it in Spotlight with Cmd+Space)
+2. Paste this command and press Enter:
+   ```
+   xattr -cr /Applications/CutServe.app
+   ```
+3. Enter your password if prompted
+4. Now open CutServe from Applications normally
 
 > You only need to do this once. After the first launch, CutServe will open normally.
 
@@ -81,7 +90,7 @@ You should now see the CutServe dashboard. Follow the instructional video (linke
 - Import a match video
 - Set court zones
 - Process the video with AI
-- Edit and organize clips
+- Edit and tag clips
 - Export your highlight reel
 
 **[Watch the Walkthrough Video](VIDEO_LINK)**
@@ -93,7 +102,7 @@ You should now see the CutServe dashboard. Follow the instructional video (linke
 | Issue | Solution |
 |-------|----------|
 | "App is damaged" error | Open Terminal, run: `xattr -cr /Applications/CutServe.app` then try again |
-| App won't open at all | Make sure you're on macOS 12+ and downloaded the right version for your Mac (Apple Silicon vs Intel) |
+| App won't open at all | Make sure you're on macOS 12+ with an Apple Silicon Mac (M1/M2/M3/M4). Intel Macs are not supported |
 | Black screen on video import | Make sure your video is .mp4 format. Other formats may not work correctly |
 | Processing seems stuck | Processing can take 5–15 minutes depending on video length. Check the progress bar |
 | Export takes a long time | Exports typically take 5–10 minutes. The progress bar will show estimated progress |
@@ -514,5 +523,5 @@ Before you send the email to your 30+ testers:
 - [ ] Add links to the notes template and feedback form in the instructions doc
 - [ ] Test the full flow yourself end-to-end on a clean account
 - [ ] Draft the email/DM to send to your IG signups
-- [ ] Include note that this beta is **Mac only** (Apple Silicon + Intel supported)
+- [ ] Include note that this beta is **Mac only (Apple Silicon)** — be upfront about this
 - [ ] Set a deadline for feedback (e.g., 2 weeks from launch)

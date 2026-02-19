@@ -124,11 +124,11 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   onProcessingComplete: (callback: (data: { clips: unknown[]; outputPath: string }) => void) => {
-    ipcRenderer.on('python:complete', (_event, data) => callback(data))
+    ipcRenderer.once('python:complete', (_event, data) => callback(data))
   },
 
   onProcessingError: (callback: (error: string) => void) => {
-    ipcRenderer.on('python:error', (_event, error) => callback(error))
+    ipcRenderer.once('python:error', (_event, error) => callback(error))
   },
   
   // ── Project Management ──────────────────────────────────────────────
@@ -175,11 +175,11 @@ contextBridge.exposeInMainWorld('api', {
   }) => ipcRenderer.invoke('export:render', args),
   
   onRenderComplete: (callback: (data: { outputPath: string }) => void) => {
-    ipcRenderer.on('render:complete', (_event, data) => callback(data))
+    ipcRenderer.once('render:complete', (_event, data) => callback(data))
   },
-  
+
   onRenderError: (callback: (error: string) => void) => {
-    ipcRenderer.on('render:error', (_event, error) => callback(error))
+    ipcRenderer.once('render:error', (_event, error) => callback(error))
   },
 
   saveExportImage: (projectId: string, filename: string, base64Data: string) =>

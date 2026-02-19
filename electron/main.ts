@@ -205,14 +205,21 @@ ipcMain.handle('file:write-zones', async (_event, projectId: string, zones: any[
 })
 
 ipcMain.handle('file:read-clips', async (_event, projectId: string) => {
-  const clipsPath = projectManager.getClipsPath(projectId)
-  const data = await fs.readFile(clipsPath, 'utf-8')
-  return JSON.parse(data)
+  try {
+    const clipsPath = projectManager.getClipsPath(projectId)
+    const data = await fs.readFile(clipsPath, 'utf-8')
+    return JSON.parse(data)
+  } catch {
+    return null
+  }
 })
 
 ipcMain.handle('file:save-edited-clips', async (_event, projectId: string, clipsData: any) => {
-  // Overwrite the original clips.json so re-opening the project loads the saved edits
   const clipsPath = projectManager.getClipsPath(projectId)
+  // Back up existing clips before overwriting
+  if (existsSync(clipsPath)) {
+    await fs.copyFile(clipsPath, clipsPath + '.bak')
+  }
   await fs.writeFile(clipsPath, JSON.stringify(clipsData, null, 2))
   await projectManager.updateProject(projectId, { status: 'edited' })
   return clipsPath
@@ -319,7 +326,16 @@ ipcMain.handle('auth:record-export', async () => {
 // ─── Shell ───────────────────────────────────────────────────────────────
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
-  await shell.openExternal(url)
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'mailto:') {
+      console.warn('[Shell] Blocked open-external with disallowed scheme:', parsed.protocol)
+      return
+    }
+    await shell.openExternal(url)
+  } catch {
+    console.warn('[Shell] Blocked open-external with invalid URL:', url)
+  }
 })
 
 // ─── App Lifecycle ──────────────────────────────────────────────────────

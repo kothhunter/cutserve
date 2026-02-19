@@ -99,6 +99,13 @@ export default function App() {
     setActiveProject(project)
 
     if (project.status === 'new' || project.status === 'zones-set' || project.status === 'processing') {
+      // Check video exists before entering zone wizard
+      const videoUrl = await window.api.getVideoUrl(project.id)
+      if (!videoUrl) {
+        alert(`Source video not found.\n\nThe original video file may have been moved or deleted:\n${project.videoPath}`)
+        setActiveProject(null)
+        return
+      }
       setView('zone-wizard')
     } else if (project.status === 'processed' || project.status === 'edited' || project.status === 'exported') {
       const [clipsData, setup] = await Promise.all([
@@ -109,6 +116,14 @@ export default function App() {
       if (clipsData.video_path && typeof clipsData.video_path === 'string') {
         setActiveProject((prev) => prev ? { ...prev, videoPath: clipsData.video_path } : null)
         await window.api.updateProject(project.id, { videoPath: clipsData.video_path })
+      }
+      // Check video exists before entering editor
+      const videoUrl = await window.api.getVideoUrl(project.id)
+      if (!videoUrl) {
+        alert(`Source video not found.\n\nThe original video file may have been moved or deleted:\n${project.videoPath}`)
+        setActiveProject(null)
+        setClips([])
+        return
       }
       setMatchSetup(setup as MatchSetup | null)
       setView(setup ? 'editor' : 'match-setup')

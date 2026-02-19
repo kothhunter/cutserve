@@ -26,12 +26,12 @@ const STAT_BUTTONS = [
 
 // ── Stat descriptions for info panel ─────────────────────────────
 const STAT_DESCRIPTIONS = [
-  { label: 'ACE',             desc: 'Unreturnable serve that hits the net' },
+  { label: 'ACE',             desc: 'Unreturnable serve (no reasonable chance to set)' },
   { label: 'DOUBLE FAULT',    desc: 'Two consecutive service errors' },
-  { label: 'SERVICE BREAK',   desc: 'Server wins point with service pressure' },
-  { label: 'SIDEOUT',         desc: 'Clean return, no rally' },
-  { label: 'DEFENSIVE BREAK', desc: 'Point won after defensive touches' },
-  { label: 'DEFENSIVE HOLD',  desc: 'Point where the holding team won after defensive touches by both sides' },
+  { label: 'SERVICE BREAK',   desc: 'Server wins point due to service pressure' },
+  { label: 'SIDEOUT',         desc: 'Clean return by recieving team, no rally' },
+  { label: 'DEFENSIVE BREAK', desc: 'Point won by the serving team after defensive touches' },
+  { label: 'DEFENSIVE HOLD',  desc: 'Point won by the recieving team after defensive touches' },
   { label: 'ERROR',           desc: 'Unforced error by a specific player' },
 ]
 
@@ -652,12 +652,12 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
                   <div className="bg-cut-base rounded-xl p-3 space-y-2 -mt-1">
                     <p className="text-[10px] text-cut-mid leading-relaxed">These buttons change the start and end time of each clip.</p>
                     <div className="p-2 bg-white rounded-lg border border-cut-warm/30">
-                      <p className="text-[10px] font-bold text-cut-deep uppercase tracking-wide mb-1">Pro tip</p>
-                      <p className="text-[10px] text-cut-mid leading-snug">Check the keybinds — they make it very easy to operate.</p>
+                      <p className="text-[10px] font-bold text-cut-deep uppercase tracking-wide mb-1">Tip</p>
+                      <p className="text-[10px] text-cut-mid leading-snug">Check the keybinds, they make it very easy to operate and clip fast.</p>
                     </div>
                     <div className="p-2 bg-white rounded-lg border border-cut-warm/30">
                       <p className="text-[10px] font-bold text-cut-deep uppercase tracking-wide mb-1">Pro workflow</p>
-                      <p className="text-[10px] text-cut-mid leading-snug">Watch the clip, click <span className="font-mono font-semibold text-cut-deep">W</span> (Start Here) for the start, then click <span className="font-mono font-semibold text-cut-deep">S</span> right when it should end.</p>
+                      <p className="text-[10px] text-cut-mid leading-snug">Watch the clip, click <span className="font-mono font-semibold text-cut-deep">W</span> (Start Here) for the start, then click <span className="font-mono font-semibold text-cut-deep">S</span> (End Here) right when it should end.</p>
                     </div>
                   </div>
                 )}
@@ -736,7 +736,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
                       : `Select players for ${playerOverlayStat ? getStatLabel(playerOverlayStat) : ''}`}
                 </div>
                 {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && (
-                  <p className="text-xs text-cut-mid mb-2">Click to add each touch. Last touch = point.</p>
+                  <p className="text-xs text-cut-mid mb-2">Click to add each touch in order.</p>
                 )}
                 {(playerOverlayStat === 'def_break' || playerOverlayStat === 'def_hold') && selectedPlayers.length > 0 && (
                   <div className="mb-2 flex items-center gap-1 flex-wrap">
@@ -746,7 +746,6 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
                         <span key={`${id}-${i}`}>
                           {i > 0 && ' → '}
                           {matchSetup?.team1.players.find(p => p.id === id)?.name ?? matchSetup?.team2.players.find(p => p.id === id)?.name ?? id}
-                          {i === selectedPlayers.length - 1 && ' (pt)'}
                         </span>
                       ))}
                     </span>

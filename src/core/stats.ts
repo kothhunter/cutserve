@@ -23,6 +23,13 @@ interface ClipLike {
   keep?: boolean
 }
 
+function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (predicate(arr[i])) return i
+  }
+  return -1
+}
+
 function getTeam(setup: MatchSetup, playerId: string): 'team1' | 'team2' {
   return setup.team1.players.some((p) => p.id === playerId) ? 'team1' : 'team2'
 }
@@ -185,16 +192,18 @@ export function calculateStats(
         receiver.successfulHits++
         break
 
-      case 'def_break':
+      case 'def_break': {
         server.totalServes++
         server.servesOn++
         receiver.broken++
         receiver.receives++
         receiver.totalHits++
+        // Serving team won — last touch by a serving team player = touch converted
+        const defBreakWinnerIdx = findLastIndex(involvedPlayers, (pid) => servingPlayerIds.includes(pid))
         for (let i = 0; i < involvedPlayers.length; i++) {
           const p = players[involvedPlayers[i]]
           if (p) {
-            if (i === involvedPlayers.length - 1) {
+            if (i === defBreakWinnerIdx) {
               p.defTouchesReturned++
               p.breaks++
             } else {
@@ -203,18 +212,21 @@ export function calculateStats(
           }
         }
         break
+      }
 
-      case 'def_hold':
+      case 'def_hold': {
         server.totalServes++
         server.servesOn++
         receiver.holds++
         receiver.receives++
         receiver.totalHits++
         receiver.successfulHits++
+        // Receiving team won — last touch by a receiving team player = touch converted
+        const defHoldWinnerIdx = findLastIndex(involvedPlayers, (pid) => receivingPlayerIds.includes(pid))
         for (let i = 0; i < involvedPlayers.length; i++) {
           const p = players[involvedPlayers[i]]
           if (p) {
-            if (i === involvedPlayers.length - 1) {
+            if (i === defHoldWinnerIdx) {
               p.defTouchesReturned++
             } else {
               p.defTouchesNotReturned++
@@ -222,6 +234,7 @@ export function calculateStats(
           }
         }
         break
+      }
 
       case 'error':
         server.totalServes++

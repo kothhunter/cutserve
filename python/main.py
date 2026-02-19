@@ -295,12 +295,12 @@ def process_video(config: Config) -> dict:
                             print("\n⚠️ Processing interrupted by user")
                         break
 
-                # Progress indicator
-                if config.debug_mode and fi % 500 == 0:
+                # Progress indicator — print every 100 frames so the UI stays responsive
+                if fi % 100 == 0:
                     elapsed = time.time() - start_time
                     fps_proc = fi / elapsed if elapsed > 0 else 0
                     percent = (fi / total_frames) * 100
-                    print(f"   [{percent:5.1f}%] Frame {fi}/{total_frames} ({fps_proc:.1f} FPS)")
+                    print(f"   [{percent:5.1f}%] Frame {fi}/{total_frames} ({fps_proc:.1f} FPS)", flush=True)
 
             batch.clear()
 

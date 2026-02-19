@@ -51,4 +51,4 @@ jobs:
         run: |
           npx vite build
           node build-preload.js
-          npx electron-builder --publish always --arch arm64
+          npx electron-builder --publish always --arm64

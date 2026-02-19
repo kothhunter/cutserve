@@ -5,6 +5,7 @@ Handles model loading, inference, and keypoint extraction.
 Automatically selects the best available device (MPS > CUDA > CPU).
 """
 
+import sys
 import cv2
 import numpy as np
 import torch
@@ -16,24 +17,29 @@ from ultralytics import YOLO
 from .config import Config
 
 
+def _is_packaged() -> bool:
+    """Check if running inside a PyInstaller bundle."""
+    return getattr(sys, 'frozen', False)
+
+
 def get_best_device() -> str:
     """
     Detect the best available compute device.
-    
+
     Priority:
-        1. MPS (Apple Silicon M1/M2/M3)
+        1. MPS (Apple Silicon M1/M2/M3) — dev only; disabled in packaged builds
+           because Metal can hang without proper app entitlements.
         2. CUDA (NVIDIA GPU)
         3. CPU (fallback)
-    
+
     Returns:
         Device string for YOLO/PyTorch ('mps', 'cuda', or 'cpu')
     """
-    if torch.backends.mps.is_available():
-        return 'mps'
-    elif torch.cuda.is_available():
+    if torch.cuda.is_available():
         return 'cuda'
-    else:
-        return 'cpu'
+    if torch.backends.mps.is_available() and not _is_packaged():
+        return 'mps'
+    return 'cpu'
 
 
 @dataclass

@@ -90,6 +90,8 @@ export class PythonRunner {
 
       this.status = { running: true, progress: 0 }
 
+      const stderrChunks: string[] = []
+
       // Stream stdout for progress updates
       this.process.stdout?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
@@ -97,10 +99,11 @@ export class PythonRunner {
         this.parseProgress(line)
       })
 
-      // Stream stderr for errors
+      // Stream stderr for errors (buffer for error reporting on failure)
       this.process.stderr?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
         console.error(`[Python ERROR] ${line}`)
+        stderrChunks.push(line)
       })
 
       // Handle process exit
@@ -117,7 +120,10 @@ export class PythonRunner {
               outputPath: args.outputJson,
             })
           } else {
-            windows[0].webContents.send('python:error', `Process exited with code ${code}`)
+            const stderrText = stderrChunks.length > 0
+              ? stderrChunks.join('\n').trim()
+              : `Process exited with code ${code}`
+            windows[0].webContents.send('python:error', stderrText)
           }
         }
       })
@@ -126,6 +132,12 @@ export class PythonRunner {
         console.error(`[PythonRunner] Failed to start: ${err.message}`)
         this.status = { running: false }
         this.process = null
+
+        // Notify renderer so the UI doesn't hang forever
+        const windows = BrowserWindow.getAllWindows()
+        if (windows.length > 0) {
+          windows[0].webContents.send('python:error', `Failed to start processing engine: ${err.message}`)
+        }
       })
 
       return { success: true, message: 'Processing started' }
@@ -283,6 +295,11 @@ export class PythonRunner {
         console.error(`[PythonRunner] Failed to start renderer: ${err.message}`)
         this.status = { running: false }
         this.process = null
+
+        const windows = BrowserWindow.getAllWindows()
+        if (windows.length > 0) {
+          windows[0].webContents.send('render:error', `Failed to start renderer: ${err.message}`)
+        }
       })
 
       return { success: true, message: 'Rendering started' }

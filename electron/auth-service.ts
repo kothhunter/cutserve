@@ -1,8 +1,8 @@
 import { createClient, SupabaseClient, Session } from '@supabase/supabase-js'
 import keytar from 'keytar'
 
-const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL as string
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string
+const SUPABASE_URL     = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
 const KEYTAR_SERVICE = 'com.cutserve.app'
 const KEYTAR_ACCOUNT = 'supabase-session'
@@ -18,21 +18,26 @@ export interface UserProfile {
 }
 
 export class AuthService {
-  private supabase: SupabaseClient
+  private supabase: SupabaseClient | null = null
   private currentSession: Session | null = null
 
   constructor() {
-    this.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
-        persistSession: false, // We manage persistence via OS keychain (keytar)
-        autoRefreshToken: true,
-      },
-    })
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      this.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: false, // We manage persistence via OS keychain (keytar)
+          autoRefreshToken: true,
+        },
+      })
+    } else {
+      console.log('[Auth] Supabase credentials not configured — auth disabled')
+    }
   }
 
   // ── Session Management ─────────────────────────────────────────────
 
   async restoreSession(): Promise<boolean> {
+    if (!this.supabase) return false
     try {
       const stored = await keytar.getPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT)
       if (!stored) return false
@@ -67,6 +72,7 @@ export class AuthService {
   // ── Auth Operations ────────────────────────────────────────────────
 
   async register(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.supabase) return { success: false, error: 'Auth not configured' }
     const { data, error } = await this.supabase.auth.signUp({ email, password })
     if (error) return { success: false, error: error.message }
 
@@ -80,6 +86,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.supabase) return { success: false, error: 'Auth not configured' }
     const { data, error } = await this.supabase.auth.signInWithPassword({ email, password })
     if (error) return { success: false, error: error.message }
 
@@ -90,7 +97,7 @@ export class AuthService {
   }
 
   async logout(): Promise<void> {
-    await this.supabase.auth.signOut()
+    if (this.supabase) await this.supabase.auth.signOut()
     this.currentSession = null
     await keytar.deletePassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT)
     console.log('[Auth] Logged out')
@@ -103,7 +110,7 @@ export class AuthService {
   // ── Profile & Freemium ────────────────────────────────────────────
 
   async getProfile(): Promise<UserProfile | null> {
-    if (!this.currentSession) return null
+    if (!this.supabase || !this.currentSession) return null
 
     const { data, error } = await this.supabase
       .from('profiles')
@@ -120,6 +127,7 @@ export class AuthService {
   }
 
   async canExport(): Promise<{ allowed: boolean; used: number; limit: number }> {
+    if (!this.supabase) return { allowed: true, used: 0, limit: -1 }
     const profile = await this.getProfile()
     if (!profile) return { allowed: false, used: 0, limit: FREE_EXPORT_LIMIT }
 
@@ -145,7 +153,7 @@ export class AuthService {
   }
 
   async recordExport(): Promise<void> {
-    if (!this.currentSession) return
+    if (!this.supabase || !this.currentSession) return
 
     try {
       // Uses the increment_export_count SQL function (SECURITY DEFINER)

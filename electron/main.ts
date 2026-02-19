@@ -375,7 +375,9 @@ app.whenReady().then(async () => {
         message: 'Update downloaded. The app will restart to install it.',
         buttons: ['Restart Now', 'Later'],
       }).then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall()
+        if (response === 0) {
+          setImmediate(() => autoUpdater.quitAndInstall(false, true))
+        }
       })
     })
 

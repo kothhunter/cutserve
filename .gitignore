@@ -42,6 +42,9 @@ release/
 build/icon.icns
 build/icon.png
 
+# Staged vendor binaries (ffmpeg etc.)
+vendor/
+
 # PyInstaller output
 python/dist/
 python/build/

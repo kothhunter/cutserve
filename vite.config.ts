@@ -15,7 +15,7 @@ export default defineConfig({
             outDir: 'dist-electron',
             minify: false,
             rollupOptions: {
-              external: ['electron', 'keytar', 'electron-updater'],
+              external: ['electron', 'keytar', 'electron-updater', 'ffmpeg-static', 'ffprobe-static'],
               output: {
                 format: 'es',
               },

@@ -26,9 +26,19 @@ import tempfile
 from pathlib import Path
 
 
+# Optional: set by --ffmpeg-dir to use bundled binaries
+_ffmpeg_dir: str | None = None
+
+
 def find_ffmpeg() -> str:
-    """Return path to ffmpeg binary. Prefer Homebrew locations (have drawtext support)."""
-    # Check Homebrew paths first - these typically have full drawtext support
+    """Return path to ffmpeg binary. Check bundled dir first, then Homebrew, then PATH."""
+    # Bundled ffmpeg (passed via --ffmpeg-dir from Electron in production)
+    if _ffmpeg_dir:
+        suffix = ".exe" if platform.system() == "Windows" else ""
+        bundled = Path(_ffmpeg_dir) / f"ffmpeg{suffix}"
+        if bundled.exists():
+            return str(bundled)
+    # Check Homebrew paths - these typically have full drawtext support
     for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         if Path(candidate).exists():
             return candidate
@@ -47,6 +57,12 @@ def find_ffmpeg() -> str:
 
 def find_ffprobe() -> str:
     """Return path to ffprobe (same dir as ffmpeg)."""
+    # Bundled ffprobe
+    if _ffmpeg_dir:
+        suffix = ".exe" if platform.system() == "Windows" else ""
+        bundled = Path(_ffmpeg_dir) / f"ffprobe{suffix}"
+        if bundled.exists():
+            return str(bundled)
     ffmpeg = find_ffmpeg()
     ffprobe = Path(ffmpeg).parent / ("ffprobe.exe" if platform.system() == "Windows" else "ffprobe")
     if not ffprobe.exists():
@@ -482,7 +498,12 @@ def main() -> None:
     parser.add_argument("--clips", required=True, help="Path to clips JSON")
     parser.add_argument("--output", required=True, help="Path to output MP4")
     parser.add_argument("--config", help="Path to export config JSON (optional)")
+    parser.add_argument("--ffmpeg-dir", help="Directory containing bundled ffmpeg/ffprobe binaries")
     args = parser.parse_args()
+
+    global _ffmpeg_dir
+    if args.ffmpeg_dir:
+        _ffmpeg_dir = args.ffmpeg_dir
 
     video_path = Path(args.video)
     data_path = Path(args.clips)

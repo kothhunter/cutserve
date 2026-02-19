@@ -201,10 +201,12 @@ export class PythonRunner {
         // Production: use bundled PyInstaller binary
         const binName = process.platform === 'win32' ? 'roundnet-renderer.exe' : 'roundnet-renderer'
         command = path.join(process.resourcesPath, 'python', binName)
+        const ffmpegDir = path.join(process.resourcesPath, 'ffmpeg')
         processArgs = [
           '--video', args.videoPath,
           '--clips', args.clipsPath,
           '--output', args.outputPath,
+          '--ffmpeg-dir', ffmpegDir,
         ]
       } else {
         // Development: run Python script directly

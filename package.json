@@ -113,8 +113,7 @@
     "publish": {
       "provider": "github",
       "owner": "kothhunter",
-      "repo": "cutserve",
-      "private": true
+      "repo": "cutserve"
     }
   }
 }

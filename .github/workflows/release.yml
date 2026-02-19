@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-python:
+    # Build PyInstaller binaries for each architecture
+    strategy:
+      matrix:
+        include:
+          - os: macos-14        # arm64 (M1+ runner)
+            arch: arm64
+          - os: macos-13        # x64 (Intel runner)
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Python dependencies
+        working-directory: python
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download model weights
+        run: |
+          # Download YOLOv8n-pose if not present (gitignored)
+          if [ ! -f yolov8n-pose.pt ]; then
+            python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+          fi
+
+      - name: Build PyInstaller binaries
+        working-directory: python
+        run: pyinstaller --clean --noconfirm roundnet-engine.spec
+
+      - name: Upload Python binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist-${{ matrix.arch }}
+          path: python/dist/
+
+  build-electron:
+    needs: build-python
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Download model weights
+        run: |
+          if [ ! -f yolov8n-pose.pt ]; then
+            python -c "from ultralytics import YOLO; YOLO('yolov8n-pose.pt')"
+          fi
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Generate icons
+        run: npm run build:icons
+
+      - name: Stage ffmpeg
+        run: npm run build:ffmpeg
+
+      - name: Download Python binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist-${{ matrix.arch }}
+          path: python/dist/
+
+      - name: Make Python binaries executable
+        run: chmod +x python/dist/roundnet-engine python/dist/roundnet-renderer
+
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vite build
+          node build-preload.js
+          electron-builder --publish always --${{ matrix.arch }}
+
+  # After both arch builds are done, the GitHub Release will have
+  # both arm64 and x64 DMGs. Publish it manually or use the API.

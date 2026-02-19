@@ -1,14 +1,15 @@
 # CutServe — Releasing & Distribution Guide
 
-## Prerequisites
+## Prerequisites (local builds)
 
 - **GitHub token**: Fine-grained token with **Contents: Read and write** on `kothhunter/cutserve`. Create at [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens?type=beta).
-- **ffmpeg** installed on your machine (`brew install ffmpeg`)
 - **Python 3.10+** available as `python3`
 
 ---
 
-## Publishing a Release
+## Publishing a Release (CI — recommended)
+
+This builds for **both Apple Silicon and Intel Macs** automatically via GitHub Actions.
 
 ### 1. Bump the version
 
@@ -20,28 +21,39 @@ Edit `package.json`:
 
 Use [semver](https://semver.org/): patch (`1.0.1`) for bug fixes, minor (`1.1.0`) for new features, major (`2.0.0`) for breaking changes.
 
-### 2. Commit the version bump
+### 2. Commit, tag, and push
 
 ```bash
 git add package.json
 git commit -m "release: v1.0.1"
-git push
+git tag v1.0.1
+git push && git push --tags
 ```
 
-### 3. Build and publish
+The `v*` tag triggers the GitHub Actions workflow, which builds arm64 + x64 DMGs and uploads them to a draft GitHub Release.
+
+### 3. Publish the release
+
+Go to [github.com/kothhunter/cutserve/releases](https://github.com/kothhunter/cutserve/releases), review the draft, and click **Publish release**.
+
+### 4. Verify
+
+The release should have:
+- `CutServe-<version>-arm64.dmg` (Apple Silicon)
+- `CutServe-<version>.dmg` (Intel)
+- `latest-mac.yml` (auto-update metadata)
+
+---
+
+## Publishing a Release (local — arm64 only)
+
+If you just need a quick arm64 build without CI:
 
 ```bash
 GH_TOKEN=<your-token> npm run release
 ```
 
-This runs the full pipeline — icons, Python binaries, Vite, electron-builder — then uploads the DMG, ZIP, and update metadata to a GitHub Release tagged with the version.
-
-### 4. Verify
-
-Go to [github.com/kothhunter/cutserve/releases](https://github.com/kothhunter/cutserve/releases) and confirm the release has:
-- `CutServe-<version>-arm64.dmg`
-- `CutServe-<version>-arm64-mac.zip`
-- `latest-mac.yml` (auto-update metadata)
+Then publish the draft on GitHub.
 
 ---
 

@@ -369,30 +369,23 @@ app.whenReady().then(async () => {
   createWindow()
 
   // ── Auto-update (production only) ────────────────────────────────
+  // Without code signing, quitAndInstall fails on macOS (Gatekeeper blocks
+  // the replacement app). Instead, notify the user and link to the download.
   if (app.isPackaged) {
     autoUpdater.logger = console
     autoUpdater.autoDownload = false
 
     autoUpdater.on('update-available', (info) => {
-      dialog.showMessageBox(mainWindow!, {
+      if (!mainWindow) return
+      dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: 'Update Available',
-        message: `CutServe v${info.version} is available. Would you like to download it now?`,
-        buttons: ['Download', 'Later'],
-      }).then(({ response }) => {
-        if (response === 0) autoUpdater.downloadUpdate()
-      })
-    })
-
-    autoUpdater.on('update-downloaded', () => {
-      dialog.showMessageBox(mainWindow!, {
-        type: 'info',
-        title: 'Update Ready',
-        message: 'Update downloaded. The app will restart to install it.',
-        buttons: ['Restart Now', 'Later'],
+        message: `CutServe v${info.version} is available.`,
+        detail: 'Would you like to open the download page? You\'ll need to install the new version manually.',
+        buttons: ['Open Download Page', 'Later'],
       }).then(({ response }) => {
         if (response === 0) {
-          setImmediate(() => autoUpdater.quitAndInstall(false, true))
+          shell.openExternal('https://github.com/kothhunter/cutserve/releases/latest')
         }
       })
     })

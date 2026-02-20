@@ -148,7 +148,8 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const [showStatScreen, setShowStatScreen] = useState(true)
   const [statDuration, setStatDuration] = useState(10)
   const [statBackground, setStatBackground] = useState<'black' | 'blur'>('black')
-  const [resolution, setResolution] = useState<'720p' | '1080p'>('1080p')
+  const [resolution, setResolution] = useState<string>('1080p')
+  const [fps, setFps] = useState<string>('source')
   const [activeTab, setActiveTab] = useState<'overlay' | 'stat' | 'export'>('overlay')
   const [previewMode, setPreviewMode] = useState<'live' | 'stat'>('live')
   const [exporting, setExporting] = useState(false)
@@ -341,9 +342,14 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
           setIsCapturingStatScreen(true)
           await new Promise((r) => setTimeout(r, 350))
           if (statCaptureRef.current) {
+            const resDims: Record<string, [number, number]> = {
+              '720p': [1280, 720], '1080p': [1920, 1080],
+              '1440p': [2560, 1440], '4k': [3840, 2160],
+            }
+            const [capW, capH] = resDims[resolution] ?? [1920, 1080]
             const dataUrl = await toPng(statCaptureRef.current, {
-              width: 1920,
-              height: 1080,
+              width: capW,
+              height: capH,
               backgroundColor: statBackground === 'black' ? '#000000' : 'rgba(0,0,0,0.3)',
               pixelRatio: 1,
               cacheBust: true,
@@ -418,6 +424,7 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
         statScreenPath,
         statDuration,
         resolution,
+        fps,
         logoConfig,
         team1LogoPath,
         team2LogoPath,
@@ -489,6 +496,7 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
     statDuration,
     statBackground,
     resolution,
+    fps,
     fontFamily,
   ])
 
@@ -505,10 +513,12 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const statCaptureEl = (
     <div
       ref={statCaptureRef}
-      className="fixed top-0 left-0 w-[1920px] h-[1080px] flex items-center justify-center p-8"
+      className="fixed top-0 left-0 flex items-center justify-center p-8"
       style={{
+        width: resolution === '4k' ? 3840 : resolution === '1440p' ? 2560 : resolution === '720p' ? 1280 : 1920,
+        height: resolution === '4k' ? 2160 : resolution === '1440p' ? 1440 : resolution === '720p' ? 720 : 1080,
         zIndex: -9999,
-        pointerEvents: 'none',
+        pointerEvents: 'none' as const,
         backgroundColor: statBackground === 'black' ? '#000000' : 'rgba(0,0,0,0.5)',
         backdropFilter: statBackground === 'blur' ? 'blur(12px)' : undefined,
       }}
@@ -1126,13 +1136,47 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                   <label className="block text-xs font-medium text-gray-400 mb-1">Resolution</label>
                   <select
                     value={resolution}
-                    onChange={(e) => setResolution(e.target.value as '720p' | '1080p')}
+                    onChange={(e) => setResolution(e.target.value)}
                     className="w-full px-3 py-2 bg-rc-surface border border-gray-600 rounded-md text-sm text-white"
                   >
                     <option value="720p">720p</option>
                     <option value="1080p">1080p</option>
+                    <option value="1440p">1440p</option>
+                    <option value="4k">4K</option>
                   </select>
                 </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-400 mb-1">Frame Rate</label>
+                  <select
+                    value={fps}
+                    onChange={(e) => setFps(e.target.value)}
+                    className="w-full px-3 py-2 bg-rc-surface border border-gray-600 rounded-md text-sm text-white"
+                  >
+                    <option value="source">Match Source</option>
+                    <option value="30">30 fps</option>
+                    <option value="60">60 fps</option>
+                    <option value="120">120 fps</option>
+                  </select>
+                </div>
+                {/* Export time disclaimers */}
+                {(() => {
+                  const hints: string[] = []
+                  if (!showOverlay && !showStatScreen && resolution === '1080p')
+                    hints.push('Fast export — no re-encoding needed')
+                  if (resolution === '1440p')
+                    hints.push('Export may take longer at this resolution')
+                  if (resolution === '4k')
+                    hints.push('4K exports can take 20–30+ minutes')
+                  if (fps === '120')
+                    hints.push('120 fps encoding takes longer than lower frame rates')
+                  return hints.length > 0 ? (
+                    <div className="space-y-1">
+                      {hints.map((h, i) => (
+                        <p key={i} className="text-xs text-yellow-400/80">{h}</p>
+                      ))}
+                    </div>
+                  ) : null
+                })()}
                 {exporting ? (
                   <div className="space-y-2">
                     <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
@@ -1142,7 +1186,7 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                       />
                     </div>
                     <p className="text-xs text-gray-400 text-center">
-                      Exporting… {exportProgress}% — this usually takes 5–10 minutes
+                      Exporting… {exportProgress}%{!showOverlay && !showStatScreen ? '' : ' — this usually takes 5–10 minutes'}
                     </p>
                   </div>
                 ) : (

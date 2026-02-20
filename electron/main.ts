@@ -268,28 +268,29 @@ ipcMain.handle('export:save-image', async (_event, projectId: string, filename: 
 })
 
 // Resolve preset overlay path (public/overlays/ in dev, resources/overlays/ in production)
+// In production, prefer extraResources path (real filesystem) over asar-internal path,
+// because these paths are passed to ffmpeg which can't read inside asar archives.
 ipcMain.handle('export:get-overlay-path', async (_event, variant: string) => {
-  const base = process.env.VITE_PUBLIC || path.join(__dirname, '..', 'public')
-  const overlayPath = path.join(base, 'overlays', `${variant}.png`)
-  if (existsSync(overlayPath)) return path.resolve(overlayPath)
-  // Fallback: bundled resources (production)
   if (app.isPackaged) {
     const bundled = path.join(process.resourcesPath, 'overlays', `${variant}.png`)
     if (existsSync(bundled)) return path.resolve(bundled)
   }
+  const base = process.env.VITE_PUBLIC || path.join(__dirname, '..', 'public')
+  const overlayPath = path.join(base, 'overlays', `${variant}.png`)
+  if (existsSync(overlayPath)) return path.resolve(overlayPath)
   return null
 })
 
 // Resolve bundled font path (public/fonts/ in dev, resources/fonts/ in production)
+// Same as above: prefer real filesystem path for ffmpeg compatibility.
 ipcMain.handle('export:get-font-path', async (_event, filename: string) => {
-  const base = process.env.VITE_PUBLIC || path.join(__dirname, '..', 'public')
-  const fontPath = path.join(base, 'fonts', filename)
-  if (existsSync(fontPath)) return path.resolve(fontPath)
-  // Fallback: bundled resources (production)
   if (app.isPackaged) {
     const bundled = path.join(process.resourcesPath, 'fonts', filename)
     if (existsSync(bundled)) return path.resolve(bundled)
   }
+  const base = process.env.VITE_PUBLIC || path.join(__dirname, '..', 'public')
+  const fontPath = path.join(base, 'fonts', filename)
+  if (existsSync(fontPath)) return path.resolve(fontPath)
   return null
 })
 

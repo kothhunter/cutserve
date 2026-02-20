@@ -70,7 +70,14 @@ def find_ffprobe() -> str:
     return str(ffprobe)
 
 
-MAX_OUTPUT_FPS = 60
+MAX_OUTPUT_FPS = 120
+
+RESOLUTIONS: dict[str, tuple[int, int]] = {
+    "720p":  (1280, 720),
+    "1080p": (1920, 1080),
+    "1440p": (2560, 1440),
+    "4k":    (3840, 2160),
+}
 
 
 def get_video_fps(video_path: Path, ffprobe: str) -> float:
@@ -94,6 +101,23 @@ def get_video_fps(video_path: Path, ffprobe: str) -> float:
                 except (ValueError, ZeroDivisionError):
                     pass
     return 30.0
+
+
+def get_video_resolution(video_path: Path, ffprobe: str) -> tuple[int, int]:
+    """Return (width, height) of the first video stream."""
+    result = subprocess.run(
+        [ffprobe, "-v", "quiet", "-select_streams", "v:0",
+         "-print_format", "json", "-show_streams", str(video_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        data = json.loads(result.stdout)
+        for s in data.get("streams", []):
+            w = s.get("width")
+            h = s.get("height")
+            if w and h:
+                return (int(w), int(h))
+    return (1920, 1080)
 
 
 def has_audio_stream(video_path: Path, ffprobe: str) -> bool:
@@ -240,12 +264,18 @@ def _run_encode(
     output_path: Path,
     has_audio: bool,
     fps: float = 30.0,
+    resolution: tuple[int, int] = (1920, 1080),
 ) -> tuple[bool, str]:
     """Run ffmpeg encode with given inputs and filter_complex."""
     on_mac = platform.system() == "Darwin"
+    out_w, out_h = resolution
+    # Scale VideoToolbox bitrate by resolution and fps relative to 1080p30 baseline
+    pixel_ratio = (out_w * out_h) / (1920 * 1080)
+    fps_ratio = min(fps / 30.0, 2.0)
+    vt_bitrate = f"{max(10, int(15 * pixel_ratio * fps_ratio))}M"
     encoders_to_try = []
     if on_mac:
-        encoders_to_try.append(("h264_videotoolbox", ["-c:v", "h264_videotoolbox"]))
+        encoders_to_try.append(("h264_videotoolbox", ["-c:v", "h264_videotoolbox", "-b:v", vt_bitrate]))
     encoders_to_try.append(("libx264", ["-c:v", "libx264", "-preset", "fast", "-crf", "23"]))
 
     fps_str = str(fps)
@@ -266,6 +296,54 @@ def _run_encode(
             continue
         return False, err
     return False, f"No suitable encoder found. Last error:\n{last_err}"
+
+
+def _run_fast_copy(
+    ffmpeg: str,
+    video_path: Path,
+    clips: list,
+    output_path: Path,
+) -> None:
+    """Fast-path: stream-copy clip segments without re-encoding.
+    Cuts land on nearest keyframe, so clips may start a fraction of a second early.
+    """
+    n = len(clips)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        segment_paths: list[Path] = []
+        for i, clip in enumerate(clips):
+            start = round(float(clip["start"]), 3)
+            end = round(float(clip["end"]), 3)
+            seg = tmp / f"seg_{i:04d}.mp4"
+            cmd = [
+                ffmpeg, "-y",
+                "-ss", str(start), "-to", str(end),
+                "-i", str(video_path),
+                "-c", "copy", "-movflags", "+faststart",
+                str(seg),
+            ]
+            ok, err = run_ffmpeg(cmd)
+            if not ok:
+                raise RuntimeError(f"Fast copy segment {i+1}/{n} failed.\n{err}")
+            segment_paths.append(seg)
+            print(f"  Segment {i+1}/{n} extracted")
+
+        # Concat all segments
+        concat_file = tmp / "concat.txt"
+        with open(concat_file, "w") as f:
+            for seg in segment_paths:
+                f.write(f"file '{seg}'\n")
+
+        cmd = [
+            ffmpeg, "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_file),
+            "-c", "copy", "-movflags", "+faststart",
+            str(output_path),
+        ]
+        ok, err = run_ffmpeg(cmd)
+        if not ok:
+            raise RuntimeError(f"Fast copy concat failed.\n{err}")
 
 
 def render_highlights(
@@ -305,6 +383,7 @@ def render_highlights(
     stat_path = cfg.get("statScreenPath")
     stat_duration = float(cfg.get("statDuration", 10))
     resolution = cfg.get("resolution", "1080p")
+    fps_config = cfg.get("fps", "source")
     logo_config = cfg.get("logoConfig", {})
     team1_logo_path = cfg.get("team1LogoPath")
     team2_logo_path = cfg.get("team2LogoPath")
@@ -313,12 +392,28 @@ def render_highlights(
 
     n = len(clips)
     total_clip_duration = sum(float(c["end"]) - float(c["start"]) for c in clips)
-    is_720p = resolution == "720p"
-    w, h = (1280, 720) if is_720p else (1920, 1080)
-    scale = "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2," if is_720p else ""
+    w, h = RESOLUTIONS.get(resolution, (1920, 1080))
     # Scale factor for overlay coords (defined in 1920x1080 space)
-    scale_x = 1280 / 1920 if is_720p else 1.0
-    scale_y = 720 / 1080 if is_720p else 1.0
+    scale_x = w / 1920
+    scale_y = h / 1080
+    # Always apply scale+pad when output resolution differs from source
+    source_w, source_h = get_video_resolution(video_abs, ffprobe)
+    needs_scale = (source_w != w or source_h != h)
+    scale = f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2," if needs_scale else ""
+
+    # Determine output FPS based on config
+    source_fps = fps  # already probed above
+    if fps_config == "source":
+        fps = source_fps
+    else:
+        try:
+            requested_fps = float(fps_config)
+            # Don't interpolate: cap at source fps
+            fps = min(requested_fps, source_fps)
+        except (ValueError, TypeError):
+            pass  # keep source fps
+    fps = round(min(fps, MAX_OUTPUT_FPS), 3)
+    print(f"Output frame rate: {fps} fps (config: {fps_config})")
 
     has_overlay_img = show_overlay and overlay_path and Path(overlay_path).exists()
     has_drawtext = show_overlay and text_config
@@ -365,7 +460,7 @@ def render_highlights(
 
             if has_overlay_img:
                 parts.append(
-                    f"[{overlay_idx}:v]fps={fps},scale={w}:{h},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[ov{i}]"
+                    f"[{overlay_idx}:v]scale={w}:{h},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS,fps={fps}[ov{i}]"
                 )
                 parts.append(f"[vb{i}][ov{i}]overlay=0:0[vo{i}]")
                 last_label = f"[vo{i}]"
@@ -381,7 +476,7 @@ def render_highlights(
                 lx = int(round(cx - lw / 2))
                 ly = int(round(cy - lh / 2))
                 parts.append(
-                    f"[{logo1_idx}:v]fps={fps},scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg1{i}]"
+                    f"[{logo1_idx}:v]scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS,fps={fps}[lg1{i}]"
                 )
                 parts.append(f"{last_label}[lg1{i}]overlay={lx}:{ly}[vl1{i}]")
                 last_label = f"[vl1{i}]"
@@ -393,7 +488,7 @@ def render_highlights(
                 lx = int(round(cx - lw / 2))
                 ly = int(round(cy - lh / 2))
                 parts.append(
-                    f"[{logo2_idx}:v]fps={fps},scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS[lg2{i}]"
+                    f"[{logo2_idx}:v]scale={lw}:{lh},loop=-1:1,trim=duration={dur},setpts=PTS-STARTPTS,fps={fps}[lg2{i}]"
                 )
                 parts.append(f"{last_label}[lg2{i}]overlay={lx}:{ly}[vl2{i}]")
                 last_label = f"[vl2{i}]"
@@ -424,6 +519,21 @@ def render_highlights(
             parts.append(f"anullsrc=r=44100:cl=stereo,duration={total_clip_duration}[outa]")
         return ";".join(parts)
 
+    # Fast-path: stream copy when no overlays/text/stat/logos and no resolution change
+    needs_reencode = (
+        has_overlay_img or use_drawtext or has_stat
+        or has_logo1 or has_logo2 or needs_scale
+    )
+    if not needs_reencode:
+        print("Fast-path export: stream copy (no re-encoding)")
+        for i, clip in enumerate(clips):
+            tag = clip.get("tag", "Unknown")
+            print(f"Clip {i + 1}/{n}: {round(float(clip['start']), 1):.1f}s -> {round(float(clip['end']), 1):.1f}s [{tag}]")
+        _run_fast_copy(ffmpeg, video_abs, clips, output_abs)
+        print(f"\n✓ Successfully rendered (fast copy): {output_abs}")
+        print(f"  Total duration: ~{total_clip_duration:.1f}s")
+        return
+
     for i, clip in enumerate(clips):
         tag = clip.get("tag", "Unknown")
         print(f"Clip {i + 1}/{n}: {round(float(clip['start']), 1):.1f}s -> {round(float(clip['end']), 1):.1f}s [{tag}]")
@@ -431,7 +541,7 @@ def render_highlights(
     filter_complex = build_filter(use_drawtext)
 
     def try_encode(out_path: Path) -> tuple[bool, str]:
-        return _run_encode(ffmpeg, inputs, filter_complex, out_path, has_audio, fps)
+        return _run_encode(ffmpeg, inputs, filter_complex, out_path, has_audio, fps, (w, h))
 
     if has_stat:
         # Two-pass: render clips first, then concat with stat screen
@@ -450,7 +560,7 @@ def render_highlights(
             if not ok and use_drawtext and "No such filter" in err:
                 print("Note: FFmpeg lacks drawtext (needs libfreetype). Exporting without score text.")
                 filter_complex = build_filter(False)
-                ok, err = _run_encode(ffmpeg, inputs, filter_complex, temp_mp4, has_audio, fps)
+                ok, err = _run_encode(ffmpeg, inputs, filter_complex, temp_mp4, has_audio, fps, (w, h))
             if not ok:
                 raise RuntimeError(f"Encode failed.\nffmpeg stderr:\n{err}\n\nFilter (first 500 chars): {filter_complex[:500]}{'...' if len(filter_complex) > 500 else ''}")
 
@@ -462,8 +572,8 @@ def render_highlights(
                 # Force stat screen to exact duration (loop image + trim, and -t to be sure)
                 stat_dur_str = str(stat_duration)
                 stat_filter = f"loop=-1:1,trim=duration={stat_dur_str},setpts=PTS-STARTPTS"
-                if is_720p:
-                    stat_filter = f"scale={w}:{h}," + stat_filter
+                # Always scale stat screen to match output resolution
+                stat_filter = f"scale={w}:{h}," + stat_filter
                 fps_str = str(fps)
                 stat_cmd = [
                     ffmpeg, "-y", "-loop", "1", "-r", fps_str, "-i", str(stat_abs),
@@ -498,7 +608,7 @@ def render_highlights(
         finally:
             temp_mp4.unlink(missing_ok=True)
     else:
-        ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps)
+        ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps, (w, h))
         if not ok:
             print("--- FFmpeg encode error (full stderr) ---")
             print(err)
@@ -510,7 +620,7 @@ def render_highlights(
         if not ok and use_drawtext and "No such filter" in err:
             print("Note: FFmpeg lacks drawtext (needs libfreetype). Exporting without score text.")
             filter_complex = build_filter(False)
-            ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps)
+            ok, err = _run_encode(ffmpeg, inputs, filter_complex, output_abs, has_audio, fps, (w, h))
         if not ok:
             raise RuntimeError(f"Encode failed.\nffmpeg stderr:\n{err}\n\nFilter (first 500 chars): {filter_complex[:500]}{'...' if len(filter_complex) > 500 else ''}")
 

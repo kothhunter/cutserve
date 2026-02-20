@@ -171,6 +171,9 @@ export class AuthService {
   }
 
   async canExport(): Promise<{ allowed: boolean; used: number; limit: number; reason?: string }> {
+    // No export limit for now — still deciding on payment model
+    return { allowed: true, used: 0, limit: -1 }
+
     if (!this.supabase) return { allowed: true, used: 0, limit: -1 }
     const profile = await this.getProfile()
     if (!profile) return { allowed: false, used: 0, limit: FREE_EXPORT_LIMIT }

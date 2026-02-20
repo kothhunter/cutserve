@@ -111,17 +111,9 @@ export function MatchSetupWizard({ projectId, onComplete }: MatchSetupWizardProp
                 <label className={labelCls}>Team 1 Name</label>
                 <input type="text" value={team1Name} onChange={e => setTeam1Name(e.target.value)} className={inputCls} />
               </div>
-              <div>
-                <label className={labelCls}>Team 1 Colour</label>
-                <input type="color" value={team1Color} onChange={e => setTeam1Color(e.target.value)} className="w-14 h-10 rounded-lg cursor-pointer border border-cut-warm/40 p-0.5" />
-              </div>
               <div className="border-t border-cut-warm/30 pt-5">
                 <label className={labelCls}>Team 2 Name</label>
                 <input type="text" value={team2Name} onChange={e => setTeam2Name(e.target.value)} className={inputCls} />
-              </div>
-              <div>
-                <label className={labelCls}>Team 2 Colour</label>
-                <input type="color" value={team2Color} onChange={e => setTeam2Color(e.target.value)} className="w-14 h-10 rounded-lg cursor-pointer border border-cut-warm/40 p-0.5" />
               </div>
             </div>
           )}

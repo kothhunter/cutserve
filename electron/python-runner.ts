@@ -308,4 +308,14 @@ export class PythonRunner {
       return { success: false, message }
     }
   }
+
+  cancelRenderer(): { success: boolean; message: string } {
+    if (!this.process) {
+      return { success: false, message: 'No renderer process running' }
+    }
+    this.process.kill('SIGTERM')
+    this.status = { running: false }
+    this.process = null
+    return { success: true, message: 'Renderer cancelled' }
+  }
 }

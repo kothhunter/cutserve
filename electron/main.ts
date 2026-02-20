@@ -258,6 +258,10 @@ ipcMain.handle('export:render', async (_event, args: {
   })
 })
 
+ipcMain.handle('export:cancel', () => {
+  return pythonRunner.cancelRenderer()
+})
+
 // Save base64 image to project dir (for stat screen or custom overlay)
 ipcMain.handle('export:save-image', async (_event, projectId: string, filename: string, base64Data: string) => {
   const projectDir = projectManager.getProjectDir(projectId)
@@ -375,18 +379,23 @@ app.whenReady().then(async () => {
   if (app.isPackaged) {
     autoUpdater.logger = console
     autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
 
     autoUpdater.on('update-available', (info) => {
       if (!mainWindow) return
+      const releaseUrl = 'https://github.com/kothhunter/cutserve/releases/latest'
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: 'Update Available',
         message: `CutServe v${info.version} is available.`,
-        detail: 'Would you like to open the download page? You\'ll need to install the new version manually.',
+        detail: `A new version is ready. Click below to open the download page and install it manually.\n\n${releaseUrl}`,
         buttons: ['Open Download Page', 'Later'],
+        defaultId: 0,
       }).then(({ response }) => {
         if (response === 0) {
-          shell.openExternal('https://github.com/kothhunter/cutserve/releases/latest')
+          shell.openExternal(releaseUrl).catch((err) => {
+            console.error('[AutoUpdate] Failed to open release URL:', err)
+          })
         }
       })
     })

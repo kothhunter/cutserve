@@ -500,6 +500,13 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
     fontFamily,
   ])
 
+  const handleCancelExport = useCallback(async () => {
+    if (!confirm('Are you sure you want to cancel the export?')) return
+    await window.api.cancelExport()
+    setExporting(false)
+    setExportError('Export cancelled')
+  }, [])
+
   const lastState = matchFlow.size > 0
     ? Array.from(matchFlow.entries()).pop()?.[1]
     : null
@@ -530,10 +537,34 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   )
 
   return (
-    <div className="h-full flex flex-col bg-rc-darker text-gray-100 overflow-hidden">
+    <div className="h-full flex flex-col bg-rc-darker text-gray-100 overflow-hidden relative">
       <style dangerouslySetInnerHTML={{ __html: fontFaceCss }} />
       {/* Stat screen capture: only in portal during export so it renders fully; never visible over preview */}
       {isCapturingStatScreen && typeof document !== 'undefined' && createPortal(statCaptureEl, document.body)}
+
+      {/* Blocking overlay during export */}
+      {exporting && (
+        <div className="absolute inset-0 z-50 bg-black/70 flex flex-col items-center justify-center">
+          <div className="bg-rc-surface rounded-2xl p-8 max-w-md w-full mx-4 space-y-4">
+            <p className="text-lg font-semibold text-center">Exporting Video...</p>
+            <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+              <div
+                className="h-full bg-rc-accent rounded-full transition-all duration-500 ease-out"
+                style={{ width: `${exportProgress}%` }}
+              />
+            </div>
+            <p className="text-sm text-gray-400 text-center">
+              {exportProgress}%{!showOverlay && !showStatScreen ? '' : ' — this usually takes 5-10 minutes'}
+            </p>
+            <button
+              onClick={handleCancelExport}
+              className="w-full px-4 py-2.5 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            >
+              Cancel Export
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex min-h-0">
         {/* Left: Live Preview (16:9) - overlay scales with this container */}
@@ -786,7 +817,8 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                         <label className="text-xs text-gray-500 capitalize">
                           {key === 'name1' ? 'Team 1 Name' : 'Team 2 Name'}
                         </label>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 items-center">
+                          <span className="text-[10px] text-gray-500 w-6 text-right">{textConfig[key].x}</span>
                           <input
                             type="range"
                             min={0}
@@ -797,6 +829,9 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                             }
                             className="flex-1"
                           />
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <span className="text-[10px] text-gray-500 w-6 text-right">{textConfig[key].y}</span>
                           <input
                             type="range"
                             min={0}
@@ -809,26 +844,27 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                           />
                         </div>
                         <div className="flex gap-2 items-center">
+                          <span className="text-[10px] text-gray-500">Size</span>
+                          <input
+                            type="range"
+                            min={24}
+                            max={120}
+                            value={textConfig[key].fontSize}
+                            onChange={(e) =>
+                              updateNameFontSize(key, Number(e.target.value))
+                            }
+                            className="flex-1"
+                          />
+                          <span className="text-[10px] text-gray-500">{textConfig[key].fontSize}px</span>
+                        </div>
+                        <div className="flex gap-2 items-center">
+                          <span className="text-[10px] text-gray-500">Color</span>
                           <input
                             type="color"
                             value={textConfig[key].color}
                             onChange={(e) => updateTextConfigColor(key, e.target.value)}
-                            className="h-8 w-12 rounded cursor-pointer flex-shrink-0"
+                            className="h-7 w-10 rounded cursor-pointer flex-shrink-0"
                           />
-                          <div className="flex-1">
-                            <span className="text-[10px] text-gray-500">Size</span>
-                            <input
-                              type="range"
-                              min={24}
-                              max={120}
-                              value={textConfig[key].fontSize}
-                              onChange={(e) =>
-                                updateNameFontSize(key, Number(e.target.value))
-                              }
-                              className="w-full"
-                            />
-                            <span className="text-[10px] text-gray-500">{textConfig[key].fontSize}px</span>
-                          </div>
                         </div>
                       </div>
                     ))}
@@ -887,7 +923,8 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                           <label className="text-xs text-gray-500 capitalize">
                             {key.replace(/(\d)/, ' $1')}
                           </label>
-                          <div className="flex gap-2">
+                          <div className="flex gap-2 items-center">
+                            <span className="text-[10px] text-gray-500 w-6 text-right">{textConfig[key].x}</span>
                             <input
                               type="range"
                               min={0}
@@ -898,6 +935,9 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                               }
                               className="flex-1"
                             />
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <span className="text-[10px] text-gray-500 w-6 text-right">{textConfig[key].y}</span>
                             <input
                               type="range"
                               min={0}
@@ -911,14 +951,8 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                           </div>
                           {(key === 'name1' || key === 'name2') && (
                             <>
-                              <input
-                                type="color"
-                                value={textConfig[key].color}
-                                onChange={(e) => updateTextConfigColor(key, e.target.value)}
-                                className="w-full h-8 rounded cursor-pointer"
-                              />
-                              <div>
-                                <span className="text-[10px] text-gray-500">Size </span>
+                              <div className="flex gap-2 items-center">
+                                <span className="text-[10px] text-gray-500">Size</span>
                                 <input
                                   type="range"
                                   min={24}
@@ -927,9 +961,18 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                                   onChange={(e) =>
                                     updateNameFontSize(key, Number(e.target.value))
                                   }
-                                  className="inline-block w-24 align-middle"
+                                  className="flex-1"
                                 />
-                                <span className="text-xs text-gray-500 ml-1">{textConfig[key].fontSize}px</span>
+                                <span className="text-xs text-gray-500">{textConfig[key].fontSize}px</span>
+                              </div>
+                              <div className="flex gap-2 items-center">
+                                <span className="text-[10px] text-gray-500">Color</span>
+                                <input
+                                  type="color"
+                                  value={textConfig[key].color}
+                                  onChange={(e) => updateTextConfigColor(key, e.target.value)}
+                                  className="h-7 w-10 rounded cursor-pointer flex-shrink-0"
+                                />
                               </div>
                             </>
                           )}
@@ -1194,7 +1237,7 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                     className="w-full px-4 py-3 bg-rc-accent hover:bg-rc-accent-hover text-white font-semibold rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     onClick={handleExportStudio}
                   >
-                    Export Studio
+                    Export Video
                   </button>
                 )}
                 {exportError && (

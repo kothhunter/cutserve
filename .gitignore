@@ -50,3 +50,5 @@ python/dist/
 python/build/
 python/.venv-build/
 python/*.spec.bak
+
+.claude

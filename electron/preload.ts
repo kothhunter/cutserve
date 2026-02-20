@@ -75,6 +75,7 @@ export interface RoundnetAPI {
   }) => Promise<{ success: boolean; message: string }>
   onRenderComplete: (callback: (data: { outputPath: string }) => void) => void
   onRenderError: (callback: (error: string) => void) => void
+  cancelExport: () => Promise<{ success: boolean; message: string }>
   saveExportImage: (projectId: string, filename: string, base64Data: string) => Promise<string>
   getOverlayPath: (variant: string) => Promise<string | null>
   getFontPath: (filename: string) => Promise<string | null>
@@ -181,6 +182,8 @@ contextBridge.exposeInMainWorld('api', {
   onRenderError: (callback: (error: string) => void) => {
     ipcRenderer.once('render:error', (_event, error) => callback(error))
   },
+
+  cancelExport: () => ipcRenderer.invoke('export:cancel'),
 
   saveExportImage: (projectId: string, filename: string, base64Data: string) =>
     ipcRenderer.invoke('export:save-image', projectId, filename, base64Data),

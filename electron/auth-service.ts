@@ -201,7 +201,9 @@ export class AuthService {
       return { allowed: true, used: profile.exports_this_month, limit: -1 }
     }
 
-    // Free plans: check device-level export limit
+    // Free plans: check both device-level AND account-level export limits.
+    // Block if either the device or the account has hit the limit, so users
+    // can't bypass by switching devices.
     const { data } = await this.supabase
       .from('device_exports')
       .select('exports_this_month, reset_at')
@@ -222,8 +224,10 @@ export class AuthService {
       }
     }
 
-    const allowed = deviceUsed < FREE_EXPORT_LIMIT
-    return { allowed, used: deviceUsed, limit: FREE_EXPORT_LIMIT }
+    const accountUsed = profile.exports_this_month ?? 0
+    const used = Math.max(deviceUsed, accountUsed)
+    const allowed = used < FREE_EXPORT_LIMIT
+    return { allowed, used, limit: FREE_EXPORT_LIMIT }
   }
 
   async recordExport(): Promise<void> {

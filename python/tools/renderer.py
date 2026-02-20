@@ -286,7 +286,7 @@ def _run_encode(
             cmd.extend(["-i", inp])
         cmd.extend(["-filter_complex", filter_complex, "-map", "[outv]", "-map", "[outa]"])
         cmd.extend(video_codec_args)
-        cmd.extend(["-r", fps_str, "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output_path)])
+        cmd.extend(["-r", fps_str, "-c:a", "aac", "-b:a", "192k", "-map_metadata", "-1", "-movflags", "+faststart", str(output_path)])
         ok, err = run_ffmpeg(cmd)
         if ok:
             return True, err
@@ -304,8 +304,9 @@ def _run_fast_copy(
     clips: list,
     output_path: Path,
 ) -> None:
-    """Fast-path: stream-copy clip segments without re-encoding.
-    Cuts land on nearest keyframe, so clips may start a fraction of a second early.
+    """Fast-path: stream-copy video, re-encode audio for precise A/V sync.
+    Cuts land on the nearest keyframe, so clips may start a fraction of a second early.
+    Audio is re-encoded (trivially fast) to avoid desync from misaligned packet boundaries.
     """
     n = len(clips)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -319,7 +320,10 @@ def _run_fast_copy(
                 ffmpeg, "-y",
                 "-ss", str(start), "-to", str(end),
                 "-i", str(video_path),
-                "-c", "copy", "-movflags", "+faststart",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-avoid_negative_ts", "make_zero",
+                "-map_metadata", "-1",
+                "-movflags", "+faststart",
                 str(seg),
             ]
             ok, err = run_ffmpeg(cmd)
@@ -520,9 +524,12 @@ def render_highlights(
         return ";".join(parts)
 
     # Fast-path: stream copy when no overlays/text/stat/logos and no resolution change
+    # Stream copy can't change fps, so force re-encode if user picked a specific fps
+    fps_needs_reencode = (fps_config != "source" and fps != source_fps)
     needs_reencode = (
         has_overlay_img or use_drawtext or has_stat
         or has_logo1 or has_logo2 or needs_scale
+        or fps_needs_reencode
     )
     if not needs_reencode:
         print("Fast-path export: stream copy (no re-encoding)")

@@ -1,7 +1,7 @@
 {
   "name": "cut-serve",
   "productName": "CutServe",
-  "version": "1.0.0-beta.18",
+  "version": "1.0.0-beta.19",
   "description": "CutServe – Cut and serve roundnet highlight reels",
   "type": "module",
   "main": "dist-electron/main.js",
@@ -13,7 +13,7 @@
     "postinstall": "electron-builder install-app-deps",
     "build:python": "cd python && bash build.sh",
     "build:icons": "bash build/generate-icons.sh",
-    "build:ffmpeg": "bash build/stage-ffmpeg.sh",
+    "build:ffmpeg": "node build/stage-ffmpeg.js",
     "build:all": "npm run build:icons && npm run build:ffmpeg && npm run build:python && npm run build",
     "release": "npm run build:icons && npm run build:ffmpeg && npm run build:python && vite build && node build-preload.js && electron-builder --publish always"
   },

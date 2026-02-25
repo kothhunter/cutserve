@@ -85,6 +85,7 @@ function createWindow() {
 
 // Start processing a video through the Python engine
 ipcMain.handle('python:start-processing', async (_event, args: {
+  projectId: string
   videoPath: string
   zonesFile: string
   outputJson: string
@@ -250,12 +251,7 @@ ipcMain.handle('export:render', async (_event, args: {
   outputPath: string
   config?: Record<string, unknown>
 }) => {
-  return pythonRunner.runRenderer({
-    videoPath: args.videoPath,
-    clipsPath: args.clipsPath,
-    outputPath: args.outputPath,
-    config: args.config
-  })
+  return pythonRunner.runRenderer(args)
 })
 
 ipcMain.handle('export:cancel', () => {
@@ -346,7 +342,7 @@ ipcMain.handle('shell:open-external', async (_event, url: string) => {
 // ─── App Lifecycle ──────────────────────────────────────────────────────
 
 app.on('window-all-closed', () => {
-  pythonRunner.stopProcessing()
+  pythonRunner.stopAll()
   if (process.platform !== 'darwin') {
     app.quit()
   }

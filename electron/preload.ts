@@ -26,6 +26,7 @@ export interface Project {
 export interface RoundnetAPI {
   // Python engine commands
   startProcessing: (args: {
+    projectId: string
     videoPath: string
     zonesFile: string
     outputJson: string
@@ -46,10 +47,10 @@ export interface RoundnetAPI {
   showSaveHighlightsDialog: (defaultPath: string) => Promise<string | null>
 
   // Event listeners for real-time progress from Python
-  onProgress: (callback: (data: { progress: number; frame: number; total: number }) => void) => void
-  onProcessingComplete: (callback: (data: { clips: unknown[]; outputPath: string }) => void) => void
-  onProcessingError: (callback: (error: string) => void) => void
-  
+  onProgress: (callback: (data: { projectId: string; progress: number; frame: number; total: number }) => void) => void
+  onProcessingComplete: (callback: (data: { projectId: string; outputPath: string }) => void) => void
+  onProcessingError: (callback: (data: { projectId: string; error: string }) => void) => void
+
   // Project management
   listProjects: () => Promise<Project[]>
   createProject: (videoPath: string, name?: string) => Promise<Project>
@@ -64,7 +65,7 @@ export interface RoundnetAPI {
   saveEditedClips: (projectId: string, clipsData: any) => Promise<string>
   readMatchSetup: (projectId: string) => Promise<unknown>
   writeMatchSetup: (projectId: string, setup: unknown) => Promise<string>
-  
+
   // Export / Rendering
   renderHighlights: (args: {
     projectId: string
@@ -73,12 +74,15 @@ export interface RoundnetAPI {
     outputPath: string
     config?: Record<string, unknown>
   }) => Promise<{ success: boolean; message: string }>
-  onRenderComplete: (callback: (data: { outputPath: string }) => void) => void
-  onRenderError: (callback: (error: string) => void) => void
+  onRenderComplete: (callback: (data: { projectId: string; outputPath: string }) => void) => void
+  onRenderError: (callback: (data: { projectId: string; error: string }) => void) => void
   cancelExport: () => Promise<{ success: boolean; message: string }>
   saveExportImage: (projectId: string, filename: string, base64Data: string) => Promise<string>
   getOverlayPath: (variant: string) => Promise<string | null>
   getFontPath: (filename: string) => Promise<string | null>
+
+  // Listener cleanup
+  removeAllListeners: (channel: string) => void
 
   // Auth
   auth: {
@@ -101,9 +105,18 @@ export interface RoundnetAPI {
   openExternal: (url: string) => Promise<void>
 }
 
+const VALID_CHANNELS = [
+  'python:progress',
+  'python:complete',
+  'python:error',
+  'render:complete',
+  'render:error',
+]
+
 contextBridge.exposeInMainWorld('api', {
   // ── Python Engine Commands ──────────────────────────────────────────
   startProcessing: (args: {
+    projectId: string
     videoPath: string
     zonesFile: string
     outputJson: string
@@ -120,44 +133,44 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('dialog:save-highlights', defaultPath),
 
   // ── Event Listeners (Python → React) ───────────────────────────────
-  onProgress: (callback: (data: { progress: number; frame: number; total: number }) => void) => {
+  onProgress: (callback: (data: { projectId: string; progress: number; frame: number; total: number }) => void) => {
     ipcRenderer.on('python:progress', (_event, data) => callback(data))
   },
 
-  onProcessingComplete: (callback: (data: { clips: unknown[]; outputPath: string }) => void) => {
-    ipcRenderer.once('python:complete', (_event, data) => callback(data))
+  onProcessingComplete: (callback: (data: { projectId: string; outputPath: string }) => void) => {
+    ipcRenderer.on('python:complete', (_event, data) => callback(data))
   },
 
-  onProcessingError: (callback: (error: string) => void) => {
-    ipcRenderer.once('python:error', (_event, error) => callback(error))
+  onProcessingError: (callback: (data: { projectId: string; error: string }) => void) => {
+    ipcRenderer.on('python:error', (_event, data) => callback(data))
   },
-  
+
   // ── Project Management ──────────────────────────────────────────────
   listProjects: () => ipcRenderer.invoke('project:list'),
-  
-  createProject: (videoPath: string, name?: string) => 
+
+  createProject: (videoPath: string, name?: string) =>
     ipcRenderer.invoke('project:create', videoPath, name),
-  
-  updateProject: (id: string, updates: any) => 
+
+  updateProject: (id: string, updates: any) =>
     ipcRenderer.invoke('project:update', id, updates),
-  
-  deleteProject: (id: string) => 
+
+  deleteProject: (id: string) =>
     ipcRenderer.invoke('project:delete', id),
-  
-  getProjectDir: (id: string) => 
+
+  getProjectDir: (id: string) =>
     ipcRenderer.invoke('project:get-dir', id),
 
   getVideoUrl: (projectId: string) =>
     ipcRenderer.invoke('video:get-url', projectId),
-  
+
   // ── File Operations ─────────────────────────────────────────────────
-  writeZones: (projectId: string, zones: any[]) => 
+  writeZones: (projectId: string, zones: any[]) =>
     ipcRenderer.invoke('file:write-zones', projectId, zones),
-  
-  readClips: (projectId: string) => 
+
+  readClips: (projectId: string) =>
     ipcRenderer.invoke('file:read-clips', projectId),
-  
-  saveEditedClips: (projectId: string, clipsData: any) => 
+
+  saveEditedClips: (projectId: string, clipsData: any) =>
     ipcRenderer.invoke('file:save-edited-clips', projectId, clipsData),
 
   readMatchSetup: (projectId: string) =>
@@ -165,7 +178,7 @@ contextBridge.exposeInMainWorld('api', {
 
   writeMatchSetup: (projectId: string, setup: unknown) =>
     ipcRenderer.invoke('file:write-match-setup', projectId, setup),
-  
+
   // ── Export / Rendering ──────────────────────────────────────────────
   renderHighlights: (args: {
     projectId: string
@@ -174,13 +187,13 @@ contextBridge.exposeInMainWorld('api', {
     outputPath: string
     config?: Record<string, unknown>
   }) => ipcRenderer.invoke('export:render', args),
-  
-  onRenderComplete: (callback: (data: { outputPath: string }) => void) => {
-    ipcRenderer.once('render:complete', (_event, data) => callback(data))
+
+  onRenderComplete: (callback: (data: { projectId: string; outputPath: string }) => void) => {
+    ipcRenderer.on('render:complete', (_event, data) => callback(data))
   },
 
-  onRenderError: (callback: (error: string) => void) => {
-    ipcRenderer.once('render:error', (_event, error) => callback(error))
+  onRenderError: (callback: (data: { projectId: string; error: string }) => void) => {
+    ipcRenderer.on('render:error', (_event, data) => callback(data))
   },
 
   cancelExport: () => ipcRenderer.invoke('export:cancel'),
@@ -193,6 +206,13 @@ contextBridge.exposeInMainWorld('api', {
 
   getFontPath: (filename: string) =>
     ipcRenderer.invoke('export:get-font-path', filename),
+
+  // ── Listener Cleanup ──────────────────────────────────────────────
+  removeAllListeners: (channel: string) => {
+    if (VALID_CHANNELS.includes(channel)) {
+      ipcRenderer.removeAllListeners(channel)
+    }
+  },
 
   // ── Auth ────────────────────────────────────────────────────────────────
   auth: {

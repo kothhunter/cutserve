@@ -1,8 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import type { Project } from '../App'
+import type { BackgroundJob } from './BackgroundJobsBar'
 
 interface DashboardProps {
   onOpenProject: (project: Project) => void
+  backgroundJobs: BackgroundJob[]
+  onStartProcessing: (project: Project) => Promise<void>
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -42,16 +45,13 @@ const STATUS_OPTIONS: { label: string; value: Project['status'] | 'all' }[] = [
 
 // ── Component ────────────────────────────────────────────────────
 
-export function Dashboard({ onOpenProject }: DashboardProps) {
+export function Dashboard({ onOpenProject, backgroundJobs, onStartProcessing }: DashboardProps) {
   const [projects, setProjects]           = useState<Project[]>([])
   const [loading, setLoading]             = useState(true)
   const [searchQuery, setSearchQuery]     = useState('')
   const [filterStatus, setFilterStatus]   = useState<Project['status'] | 'all'>('all')
   const [showFilterMenu, setShowFilterMenu] = useState(false)
-  // Live progress kept in local state — avoids a disk write + full reload on every frame
-  const [liveProgress, setLiveProgress]   = useState<{ id: string; pct: number } | null>(null)
   const filterRef = useRef<HTMLDivElement>(null)
-  const lastProgressWrite = useRef<number>(0)
 
   useEffect(() => { loadProjects() }, [])
 
@@ -109,104 +109,19 @@ export function Dashboard({ onOpenProject }: DashboardProps) {
     }
   }
 
-  const canStartProcessing = (p: Project) => p.status === 'zones-set' && !p.clipsJson
+  const canStartProcessing = (p: Project) =>
+    p.status === 'zones-set' && !p.clipsJson && !backgroundJobs.some(j => j.type === 'processing' && j.projectId === p.id)
 
   const handleStartProcessing = async (project: Project, e: React.MouseEvent) => {
     e.stopPropagation()
     try {
-      setLiveProgress({ id: project.id, pct: 0 })
-      await window.api.updateProject(project.id, { status: 'processing', processingProgress: 0 })
+      await onStartProcessing(project)
       await loadProjects()
-      const projectDir = await window.api.getProjectDir(project.id)
-      const result = await window.api.startProcessing({
-        videoPath: project.videoPath,
-        zonesFile: `${projectDir}/court_zones.json`,
-        outputJson: `${projectDir}/clips.json`,
-        options: {},
-      })
-      if (!result.success) throw new Error(result.message)
     } catch (err) {
-      await window.api.updateProject(project.id, { status: 'zones-set', processingProgress: 0 })
       await loadProjects()
       alert(`Failed to start processing: ${err}`)
     }
   }
-
-  // Processing event listeners — registered once on mount.
-  // Progress updates go to local state (no disk I/O per frame).
-  // Disk writes are throttled to at most once every 3 seconds during processing.
-  useEffect(() => {
-    if (!window.api) return
-
-    window.api.onProcessingComplete(async (data) => {
-      const list = await window.api.listProjects()
-      const proc = list.find(p => p.status === 'processing')
-      if (proc) {
-        setLiveProgress(null)
-        await window.api.updateProject(proc.id, { status: 'processed', clipsJson: data.outputPath, processingProgress: 100 })
-        await loadProjects()
-      }
-    })
-
-    window.api.onProcessingError(async (error) => {
-      const list = await window.api.listProjects()
-      const proc = list.find(p => p.status === 'processing')
-      if (proc) {
-        setLiveProgress(null)
-        await window.api.updateProject(proc.id, { status: 'zones-set', processingProgress: 0 })
-        await loadProjects()
-        if (confirm(`Processing failed: ${error}\n\nWould you like to retry?`)) {
-          const dir = await window.api.getProjectDir(proc.id)
-          await window.api.updateProject(proc.id, { status: 'processing', processingProgress: 0 })
-          await loadProjects()
-          const result = await window.api.startProcessing({
-            videoPath: proc.videoPath,
-            zonesFile: `${dir}/court_zones.json`,
-            outputJson: `${dir}/clips.json`,
-            options: {},
-          })
-          if (!result.success) {
-            await window.api.updateProject(proc.id, { status: 'zones-set', processingProgress: 0 })
-            await loadProjects()
-            alert(result.message)
-          }
-        }
-      }
-    })
-
-    window.api.onProgress(async (data) => {
-      const pct = Math.round(data.progress)
-
-      // Always update local state immediately — drives the UI badge with no disk I/O
-      setLiveProgress(prev => {
-        // Find the processing project id if we don't have it yet
-        if (prev) return { ...prev, pct }
-        return null // will be set below once we know the id
-      })
-
-      // Throttle disk writes to once every 3 seconds
-      const now = Date.now()
-      if (now - lastProgressWrite.current < 3000) {
-        // Still update local display even if we skip the disk write
-        setProjects(prev => prev.map(p =>
-          p.status === 'processing' ? { ...p, processingProgress: pct } : p
-        ))
-        return
-      }
-      lastProgressWrite.current = now
-
-      const list = await window.api.listProjects()
-      const proc = list.find(p => p.status === 'processing')
-      if (proc) {
-        setLiveProgress({ id: proc.id, pct })
-        await window.api.updateProject(proc.id, { processingProgress: pct })
-        // Update local project list without a full reload
-        setProjects(prev => prev.map(p =>
-          p.id === proc.id ? { ...p, processingProgress: pct } : p
-        ))
-      }
-    })
-  }, [])
 
   // Filtered + searched project list
   const filteredProjects = projects.filter(p => {
@@ -220,15 +135,25 @@ export function Dashboard({ onOpenProject }: DashboardProps) {
   // ── Status badge ──────────────────────────────────────────────
   const getStatusBadge = (project: Project) => {
     const base = 'px-2 py-0.5 text-xs rounded-full font-medium'
+    // Check if there's a background job for this project
+    const job = backgroundJobs.find(j => j.projectId === project.id)
+    if (job?.type === 'processing') {
+      return <span className={`${base} bg-blue-100 text-blue-700`}>
+        Processing {job.progress ? `${job.progress}%` : '…'}
+      </span>
+    }
+    if (job?.type === 'exporting') {
+      return <span className={`${base} bg-purple-100 text-purple-700`}>
+        Exporting {job.progress ? `${job.progress}%` : '…'}
+      </span>
+    }
     switch (project.status) {
       case 'new':
         return <span className={`${base} bg-cut-warm/40 text-cut-muted`}>New</span>
       case 'zones-set':
         return <span className={`${base} bg-green-100 text-green-700`}>Zones ✓</span>
       case 'processing': {
-        // Use live local state for instant updates; fall back to stored value
-        const pct = (liveProgress?.id === project.id ? liveProgress.pct : null)
-          ?? project.processingProgress
+        const pct = project.processingProgress
         return <span className={`${base} bg-blue-100 text-blue-700`}>
           Processing {pct ? `${pct}%` : '…'}
         </span>
@@ -389,7 +314,7 @@ export function Dashboard({ onOpenProject }: DashboardProps) {
                   </div>
                 </div>
 
-                
+
 
                 {/* Last Opened */}
                 <div className="hidden md:flex flex-col items-end w-28 flex-shrink-0">

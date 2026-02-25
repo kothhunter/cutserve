@@ -6,13 +6,19 @@ import { app, BrowserWindow } from 'electron'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 /**
- * PythonRunner – spawns and manages the Python backend process.
+ * PythonRunner – spawns and manages the Python backend processes.
  *
  * In development: runs `python python/main.py` directly.
  * In production (packaged via PyInstaller): runs the bundled executable.
+ *
+ * Two independent process slots:
+ * - detectionProcess: video detection / clip extraction
+ * - renderProcess: video export / rendering
+ * Both can run concurrently.
  */
 
 interface ProcessingArgs {
+  projectId: string
   videoPath: string
   zonesFile: string
   outputJson: string
@@ -27,8 +33,24 @@ interface ProcessingStatus {
 }
 
 export class PythonRunner {
-  private process: ChildProcess | null = null
+  private detectionProcess: ChildProcess | null = null
+  private renderProcess: ChildProcess | null = null
   private status: ProcessingStatus = { running: false }
+
+  /**
+   * Kill a child process in a platform-appropriate way.
+   * On Windows, SIGTERM is not reliable — use taskkill instead.
+   */
+  private killProcess(proc: ChildProcess): void {
+    if (process.platform === 'win32') {
+      // On Windows, spawn taskkill to forcefully end the process tree
+      if (proc.pid) {
+        spawn('taskkill', ['/pid', proc.pid.toString(), '/f', '/t'], { stdio: 'ignore' })
+      }
+    } else {
+      proc.kill('SIGTERM')
+    }
+  }
 
   /**
    * Get the path to the Python executable / script.
@@ -45,7 +67,8 @@ export class PythonRunner {
       // Development: run Python script directly
       // Use -u flag to unbuffer output so we see it in real-time
       const scriptPath = path.join(__dirname, '..', 'python', 'main.py')
-      return { command: 'python3', args: ['-u', scriptPath] }
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+      return { command: pythonCmd, args: ['-u', scriptPath] }
     }
   }
 
@@ -53,9 +76,11 @@ export class PythonRunner {
    * Start video processing by spawning the Python engine.
    */
   async startProcessing(args: ProcessingArgs): Promise<{ success: boolean; message: string }> {
-    if (this.process) {
+    if (this.detectionProcess) {
       return { success: false, message: 'Processing is already running' }
     }
+
+    const { projectId } = args
 
     try {
       const { command, args: baseArgs } = this.getPythonPath()
@@ -83,7 +108,7 @@ export class PythonRunner {
       console.log(`[PythonRunner] Starting: ${command} ${processArgs.join(' ')}`)
       console.log(`[PythonRunner] Working directory:`, process.cwd())
 
-      this.process = spawn(command, processArgs, {
+      this.detectionProcess = spawn(command, processArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: { ...process.env, PYTHONUNBUFFERED: '1' }, // Unbuffer Python output
       })
@@ -93,50 +118,54 @@ export class PythonRunner {
       const stderrChunks: string[] = []
 
       // Stream stdout for progress updates
-      this.process.stdout?.on('data', (data: Buffer) => {
+      this.detectionProcess.stdout?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
         console.log(`[Python] ${line}`)
-        this.parseProgress(line)
+        this.parseProgress(line, projectId)
       })
 
       // Stream stderr for errors (buffer for error reporting on failure)
-      this.process.stderr?.on('data', (data: Buffer) => {
+      this.detectionProcess.stderr?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
         console.error(`[Python ERROR] ${line}`)
         stderrChunks.push(line)
       })
 
       // Handle process exit
-      this.process.on('close', (code: number | null) => {
+      this.detectionProcess.on('close', (code: number | null) => {
         console.log(`[PythonRunner] Process exited with code ${code}`)
         this.status = { running: false }
-        this.process = null
+        this.detectionProcess = null
 
         // Notify renderer
         const windows = BrowserWindow.getAllWindows()
         if (windows.length > 0) {
           if (code === 0) {
             windows[0].webContents.send('python:complete', {
+              projectId,
               outputPath: args.outputJson,
             })
           } else {
             const stderrText = stderrChunks.length > 0
               ? stderrChunks.join('\n').trim()
               : `Process exited with code ${code}`
-            windows[0].webContents.send('python:error', stderrText)
+            windows[0].webContents.send('python:error', { projectId, error: stderrText })
           }
         }
       })
 
-      this.process.on('error', (err: Error) => {
+      this.detectionProcess.on('error', (err: Error) => {
         console.error(`[PythonRunner] Failed to start: ${err.message}`)
         this.status = { running: false }
-        this.process = null
+        this.detectionProcess = null
 
         // Notify renderer so the UI doesn't hang forever
         const windows = BrowserWindow.getAllWindows()
         if (windows.length > 0) {
-          windows[0].webContents.send('python:error', `Failed to start processing engine: ${err.message}`)
+          windows[0].webContents.send('python:error', {
+            projectId,
+            error: `Failed to start processing engine: ${err.message}`,
+          })
         }
       })
 
@@ -151,7 +180,7 @@ export class PythonRunner {
    * Parse progress output from the Python script's stdout.
    * Expected format: [  25.3%] Frame 1234/5000 (120.5 FPS)
    */
-  private parseProgress(line: string) {
+  private parseProgress(line: string, projectId: string) {
     const progressMatch = line.match(/\[\s*([\d.]+)%\]\s*Frame\s+(\d+)\/(\d+)/)
     if (progressMatch) {
       const progress = parseFloat(progressMatch[1])
@@ -164,6 +193,7 @@ export class PythonRunner {
       const windows = BrowserWindow.getAllWindows()
       if (windows.length > 0) {
         windows[0].webContents.send('python:progress', {
+          projectId,
           progress,
           frame: currentFrame,
           total: totalFrames,
@@ -173,12 +203,12 @@ export class PythonRunner {
   }
 
   /**
-   * Stop the currently running Python process.
+   * Stop the currently running detection process.
    */
   async stopProcessing(): Promise<{ success: boolean }> {
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      this.process = null
+    if (this.detectionProcess) {
+      this.killProcess(this.detectionProcess)
+      this.detectionProcess = null
       this.status = { running: false }
       return { success: true }
     }
@@ -196,14 +226,17 @@ export class PythonRunner {
    * Run the video renderer to export final highlights.
    */
   async runRenderer(args: {
+    projectId: string
     videoPath: string
     clipsPath: string
     outputPath: string
     config?: Record<string, unknown>
   }): Promise<{ success: boolean; message: string }> {
-    if (this.process) {
-      return { success: false, message: 'Another process is already running' }
+    if (this.renderProcess) {
+      return { success: false, message: 'A render is already running' }
     }
+
+    const { projectId } = args
 
     try {
       let command: string
@@ -223,7 +256,7 @@ export class PythonRunner {
       } else {
         // Development: run Python script directly
         const scriptPath = path.join(__dirname, '..', 'python', 'tools', 'renderer.py')
-        command = 'python3'
+        command = process.platform === 'win32' ? 'python' : 'python3'
         processArgs = [
           scriptPath,
           '--video', args.videoPath,
@@ -241,64 +274,72 @@ export class PythonRunner {
 
       console.log(`[PythonRunner] Starting renderer: ${command} ${processArgs.join(' ')}`)
 
-      // Prefer Homebrew ffmpeg (has drawtext support) - prepend to PATH so it's found first
+      // Ensure ffmpeg is findable on PATH
       const pathEnv = process.env.PATH || ''
-      const extraPaths = ['/opt/homebrew/bin', '/usr/local/bin']
+      const extraPaths: string[] = []
+      if (process.platform === 'darwin') {
+        // Prefer Homebrew ffmpeg (has drawtext support)
+        extraPaths.push('/opt/homebrew/bin', '/usr/local/bin')
+      }
+      // In production, also add the bundled ffmpeg directory
+      if (app.isPackaged) {
+        extraPaths.push(path.join(process.resourcesPath, 'ffmpeg'))
+      }
       const pathSet = new Set(extraPaths)
       pathEnv.split(path.delimiter).forEach((p) => pathSet.add(p))
       const envWithPath = { ...process.env, PATH: [...pathSet].join(path.delimiter) }
 
-      this.process = spawn(command, processArgs, {
+      this.renderProcess = spawn(command, processArgs, {
         stdio: ['pipe', 'pipe', 'pipe'],
         env: envWithPath,
       })
 
-      this.status = { running: true, progress: 0 }
-
       const stderrChunks: string[] = []
 
       // Stream stdout
-      this.process.stdout?.on('data', (data: Buffer) => {
+      this.renderProcess.stdout?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
         console.log(`[Renderer] ${line}`)
       })
 
       // Stream stderr (buffer so we can show user on failure)
-      this.process.stderr?.on('data', (data: Buffer) => {
+      this.renderProcess.stderr?.on('data', (data: Buffer) => {
         const line = data.toString().trim()
         console.error(`[Renderer ERROR] ${line}`)
         stderrChunks.push(line)
       })
 
       // Handle process exit
-      this.process.on('close', (code: number | null) => {
+      this.renderProcess.on('close', (code: number | null) => {
         console.log(`[PythonRunner] Renderer exited with code ${code}`)
-        this.status = { running: false }
-        this.process = null
+        this.renderProcess = null
 
         const windows = BrowserWindow.getAllWindows()
         if (windows.length > 0) {
           if (code === 0) {
             windows[0].webContents.send('render:complete', {
+              projectId,
               outputPath: args.outputPath,
             })
           } else {
             const stderrText = stderrChunks.length > 0
               ? stderrChunks.join('\n').trim()
               : `Renderer exited with code ${code}`
-            windows[0].webContents.send('render:error', stderrText)
+            windows[0].webContents.send('render:error', { projectId, error: stderrText })
           }
         }
       })
 
-      this.process.on('error', (err: Error) => {
+      this.renderProcess.on('error', (err: Error) => {
         console.error(`[PythonRunner] Failed to start renderer: ${err.message}`)
-        this.status = { running: false }
-        this.process = null
+        this.renderProcess = null
 
         const windows = BrowserWindow.getAllWindows()
         if (windows.length > 0) {
-          windows[0].webContents.send('render:error', `Failed to start renderer: ${err.message}`)
+          windows[0].webContents.send('render:error', {
+            projectId,
+            error: `Failed to start renderer: ${err.message}`,
+          })
         }
       })
 
@@ -310,12 +351,26 @@ export class PythonRunner {
   }
 
   cancelRenderer(): { success: boolean; message: string } {
-    if (!this.process) {
+    if (!this.renderProcess) {
       return { success: false, message: 'No renderer process running' }
     }
-    this.process.kill('SIGTERM')
-    this.status = { running: false }
-    this.process = null
+    this.killProcess(this.renderProcess)
+    this.renderProcess = null
     return { success: true, message: 'Renderer cancelled' }
+  }
+
+  /**
+   * Stop all running processes (called on app quit).
+   */
+  stopAll(): void {
+    if (this.detectionProcess) {
+      this.killProcess(this.detectionProcess)
+      this.detectionProcess = null
+    }
+    if (this.renderProcess) {
+      this.killProcess(this.renderProcess)
+      this.renderProcess = null
+    }
+    this.status = { running: false }
   }
 }

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { toPng } from 'html-to-image'
 import type { Project, Clip } from '../App'
 import type { MatchSetup } from '../types/match'
+import type { BackgroundJob } from '../components/BackgroundJobsBar'
 import { StatTable } from '../components/StatTable'
 import { StatOverlay } from '../components/StatOverlay'
 import { useMatchContext } from '../context/MatchContext'
@@ -120,9 +121,11 @@ interface ExportProps {
   matchSetup: MatchSetup
   clips: Clip[]
   onBack: () => void
+  backgroundJobs: BackgroundJob[]
+  onStartExport: (projectId: string, projectName: string, renderArgs: { videoPath: string; clipsPath: string; outputPath: string; config?: Record<string, unknown> }) => Promise<void>
 }
 
-export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
+export function Export({ project, matchSetup, clips, onBack, backgroundJobs, onStartExport }: ExportProps) {
   const { matchFlow } = useMatchContext()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -152,9 +155,6 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const [fps, setFps] = useState<string>('source')
   const [activeTab, setActiveTab] = useState<'overlay' | 'stat' | 'export'>('overlay')
   const [previewMode, setPreviewMode] = useState<'live' | 'stat'>('live')
-  const [exporting, setExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState(0)
-  const exportStartRef = useRef<number>(0)
   const [exportError, setExportError] = useState<string | null>(null)
   const [isCapturingStatScreen, setIsCapturingStatScreen] = useState(false)
   const [previewScale, setPreviewScale] = useState(1)
@@ -162,21 +162,9 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const statCaptureRef = useRef<HTMLDivElement>(null)
   const previewContainerRef = useRef<HTMLDivElement>(null)
 
-  // Simulated export progress — eases toward 90% over ~5 min, jumps to 100% on completion
-  useEffect(() => {
-    if (!exporting) {
-      setExportProgress(0)
-      return
-    }
-    exportStartRef.current = Date.now()
-    const interval = setInterval(() => {
-      const elapsed = (Date.now() - exportStartRef.current) / 1000
-      // Asymptotic curve: reaches ~90% at 5 min (300s), never hits 100
-      const progress = Math.min(90, 90 * (1 - Math.exp(-elapsed / 120)))
-      setExportProgress(Math.round(progress))
-    }, 500)
-    return () => clearInterval(interval)
-  }, [exporting])
+  // Derive exporting state from background jobs
+  const exportJob = backgroundJobs.find(j => j.type === 'exporting' && j.projectId === project.id)
+  const exporting = !!exportJob
 
   const stats = calculateStats(matchSetup, clips, matchFlow)
   const players = [...matchSetup.team1.players, ...matchSetup.team2.players]
@@ -440,44 +428,17 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
         return
       }
 
-      // 7. Start render
-      setExporting(true)
+      // 7. Start render via App-level background job
       const clipsPath = `${projectDir}/clips.json`
-      const result = await window.api.renderHighlights({
-        projectId: project.id,
+      await onStartExport(project.id, project.name, {
         videoPath: project.videoPath,
         clipsPath,
         outputPath,
         config,
       })
-
-      if (!result.success) {
-        throw new Error(result.message)
-      }
-
-      const onComplete = async (data: { outputPath: string }) => {
-        await window.api.auth.recordExport()
-        setExportProgress(100)
-        setExporting(false)
-        setExportError(null)
-        alert(`Export complete!\n\nSaved to: ${data.outputPath}`)
-        window.api.updateProject(project.id, {
-          status: 'exported',
-          finalVideo: data.outputPath,
-        })
-      }
-      const onErr = (error: string) => {
-        setExporting(false)
-        setExportError(error)
-        if (confirm(`Export failed: ${error}\n\nWould you like to retry?`)) {
-          handleExportStudio()
-        }
-      }
-      window.api.onRenderComplete(onComplete)
-      window.api.onRenderError(onErr)
+      setExportError(null)
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      setExporting(false)
       setExportError(msg)
       alert(`Export failed: ${msg}`)
     }
@@ -503,7 +464,6 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
   const handleCancelExport = useCallback(async () => {
     if (!confirm('Are you sure you want to cancel the export?')) return
     await window.api.cancelExport()
-    setExporting(false)
     setExportError('Export cancelled')
   }, [])
 
@@ -541,30 +501,6 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
       <style dangerouslySetInnerHTML={{ __html: fontFaceCss }} />
       {/* Stat screen capture: only in portal during export so it renders fully; never visible over preview */}
       {isCapturingStatScreen && typeof document !== 'undefined' && createPortal(statCaptureEl, document.body)}
-
-      {/* Blocking overlay during export */}
-      {exporting && (
-        <div className="absolute inset-0 z-50 bg-black/70 flex flex-col items-center justify-center">
-          <div className="bg-rc-surface rounded-2xl p-8 max-w-md w-full mx-4 space-y-4">
-            <p className="text-lg font-semibold text-center">Exporting Video...</p>
-            <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
-              <div
-                className="h-full bg-rc-accent rounded-full transition-all duration-500 ease-out"
-                style={{ width: `${exportProgress}%` }}
-              />
-            </div>
-            <p className="text-sm text-gray-400 text-center">
-              {exportProgress}%{!showOverlay && !showStatScreen ? '' : ' — this usually takes 5-10 minutes'}
-            </p>
-            <button
-              onClick={handleCancelExport}
-              className="w-full px-4 py-2.5 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
-            >
-              Cancel Export
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="flex-1 flex min-h-0">
         {/* Left: Live Preview (16:9) - overlay scales with this container */}
@@ -1222,15 +1158,15 @@ export function Export({ project, matchSetup, clips, onBack }: ExportProps) {
                 })()}
                 {exporting ? (
                   <div className="space-y-2">
-                    <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
-                      <div
-                        className="h-full bg-rc-accent rounded-full transition-all duration-500 ease-out"
-                        style={{ width: `${exportProgress}%` }}
-                      />
-                    </div>
                     <p className="text-xs text-gray-400 text-center">
-                      Exporting… {exportProgress}%{!showOverlay && !showStatScreen ? '' : ' — this usually takes 5–10 minutes'}
+                      Exporting in background… You can navigate away.
                     </p>
+                    <button
+                      onClick={handleCancelExport}
+                      className="w-full px-4 py-2.5 text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                    >
+                      Cancel Export
+                    </button>
                   </div>
                 ) : (
                   <button

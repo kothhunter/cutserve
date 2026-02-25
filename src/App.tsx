@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { ZoneWizard } from './components/ZoneWizard'
 import { MatchSetupWizard } from './components/MatchSetupWizard'
@@ -6,6 +6,8 @@ import { Editor } from './components/Editor'
 import { Export } from './pages/Export'
 import { LoginScreen } from './components/LoginScreen'
 import { MatchProvider } from './context/MatchContext'
+import { BackgroundJobsBar } from './components/BackgroundJobsBar'
+import type { BackgroundJob } from './components/BackgroundJobsBar'
 import type { MatchSetup } from './types/match'
 import logoSvg from '/logo/CUT.svg'
 
@@ -64,6 +66,31 @@ export default function App() {
   const [clips, setClips]             = useState<Clip[]>([])
   const [matchSetup, setMatchSetup]   = useState<MatchSetup | null>(null)
 
+  // ── Background job tracking (persistent across all views) ──────
+  const [backgroundJobs, setBackgroundJobs] = useState<BackgroundJob[]>([])
+  const exportStartTimes = useRef<Map<string, number>>(new Map())
+
+  // Simulated progress for export jobs (renderer doesn't emit real progress)
+  useEffect(() => {
+    const hasExportJob = backgroundJobs.some((j) => j.type === 'exporting')
+    if (!hasExportJob) return
+
+    const interval = setInterval(() => {
+      setBackgroundJobs((prev) =>
+        prev.map((j) => {
+          if (j.type !== 'exporting') return j
+          const start = exportStartTimes.current.get(j.projectId)
+          if (!start) return j
+          const elapsed = (Date.now() - start) / 1000
+          // Asymptotic curve: reaches ~90% at 5 min (300s), never hits 100
+          const progress = Math.min(90, Math.round(90 * (1 - Math.exp(-elapsed / 120))))
+          return { ...j, progress }
+        })
+      )
+    }, 500)
+    return () => clearInterval(interval)
+  }, [backgroundJobs.some((j) => j.type === 'exporting')])
+
   // ── Restore session on mount ─────────────────────────────────────
   useEffect(() => {
     window.api.auth.restore().then(async (ok) => {
@@ -75,6 +102,137 @@ export default function App() {
         setAuthState('unauthenticated')
       }
     })
+  }, [])
+
+  // ── Register persistent IPC listeners for background jobs ──────
+  useEffect(() => {
+    if (!window.api) return
+
+    window.api.onProgress((data) => {
+      const pct = Math.round(data.progress)
+      setBackgroundJobs((prev) =>
+        prev.map((j) =>
+          j.type === 'processing' && j.projectId === data.projectId
+            ? { ...j, progress: pct }
+            : j
+        )
+      )
+    })
+
+    window.api.onProcessingComplete(async (data) => {
+      setBackgroundJobs((prev) =>
+        prev.filter((j) => !(j.type === 'processing' && j.projectId === data.projectId))
+      )
+      await window.api.updateProject(data.projectId, {
+        status: 'processed',
+        clipsJson: data.outputPath,
+        processingProgress: 100,
+      })
+    })
+
+    window.api.onProcessingError(async (data) => {
+      setBackgroundJobs((prev) =>
+        prev.filter((j) => !(j.type === 'processing' && j.projectId === data.projectId))
+      )
+      await window.api.updateProject(data.projectId, {
+        status: 'zones-set',
+        processingProgress: 0,
+      })
+      alert(`Processing failed: ${data.error}`)
+    })
+
+    window.api.onRenderComplete(async (data) => {
+      exportStartTimes.current.delete(data.projectId)
+      setBackgroundJobs((prev) => {
+        const had = prev.some((j) => j.type === 'exporting' && j.projectId === data.projectId)
+        if (!had) return prev // Not a background job (e.g. Editor quick-export)
+        window.api.auth.recordExport()
+        window.api.updateProject(data.projectId, {
+          status: 'exported',
+          finalVideo: data.outputPath,
+        })
+        alert(`Export complete!\n\nSaved to: ${data.outputPath}`)
+        return prev.filter((j) => !(j.type === 'exporting' && j.projectId === data.projectId))
+      })
+    })
+
+    window.api.onRenderError(async (data) => {
+      exportStartTimes.current.delete(data.projectId)
+      setBackgroundJobs((prev) => {
+        const had = prev.some((j) => j.type === 'exporting' && j.projectId === data.projectId)
+        if (!had) return prev
+        alert(`Export failed: ${data.error}`)
+        return prev.filter((j) => !(j.type === 'exporting' && j.projectId === data.projectId))
+      })
+    })
+
+    return () => {
+      window.api.removeAllListeners('python:progress')
+      window.api.removeAllListeners('python:complete')
+      window.api.removeAllListeners('python:error')
+      window.api.removeAllListeners('render:complete')
+      window.api.removeAllListeners('render:error')
+    }
+  }, [])
+
+  // ── Background job helpers ──────────────────────────────────────
+  const startProcessingJob = useCallback(async (project: Project) => {
+    setBackgroundJobs((prev) => [
+      ...prev,
+      { projectId: project.id, projectName: project.name, type: 'processing', progress: 0 },
+    ])
+    await window.api.updateProject(project.id, { status: 'processing', processingProgress: 0 })
+    const projectDir = await window.api.getProjectDir(project.id)
+    const result = await window.api.startProcessing({
+      projectId: project.id,
+      videoPath: project.videoPath,
+      zonesFile: `${projectDir}/court_zones.json`,
+      outputJson: `${projectDir}/clips.json`,
+      options: {},
+    })
+    if (!result.success) {
+      setBackgroundJobs((prev) =>
+        prev.filter((j) => !(j.type === 'processing' && j.projectId === project.id))
+      )
+      await window.api.updateProject(project.id, { status: 'zones-set', processingProgress: 0 })
+      throw new Error(result.message)
+    }
+  }, [])
+
+  const startExportJob = useCallback(async (
+    projectId: string,
+    projectName: string,
+    renderArgs: { videoPath: string; clipsPath: string; outputPath: string; config?: Record<string, unknown> }
+  ) => {
+    exportStartTimes.current.set(projectId, Date.now())
+    setBackgroundJobs((prev) => [
+      ...prev,
+      { projectId, projectName, type: 'exporting', progress: 0 },
+    ])
+    const result = await window.api.renderHighlights({
+      projectId,
+      ...renderArgs,
+    })
+    if (!result.success) {
+      exportStartTimes.current.delete(projectId)
+      setBackgroundJobs((prev) =>
+        prev.filter((j) => !(j.type === 'exporting' && j.projectId === projectId))
+      )
+      throw new Error(result.message)
+    }
+  }, [])
+
+  const handleCancelJob = useCallback(async (job: BackgroundJob) => {
+    if (job.type === 'processing') {
+      await window.api.stopProcessing()
+      await window.api.updateProject(job.projectId, { status: 'zones-set', processingProgress: 0 })
+    } else {
+      exportStartTimes.current.delete(job.projectId)
+      await window.api.cancelExport()
+    }
+    setBackgroundJobs((prev) =>
+      prev.filter((j) => !(j.type === job.type && j.projectId === job.projectId))
+    )
   }, [])
 
   const handleAuthenticated = async () => {
@@ -278,7 +436,11 @@ export default function App() {
       {/* ── Main Content ───────────────────────────────────────── */}
       <main className="flex-1 overflow-hidden" onClick={() => showProfileMenu && setShowProfileMenu(false)}>
         {view === 'dashboard' && (
-          <Dashboard onOpenProject={handleOpenProject} />
+          <Dashboard
+            onOpenProject={handleOpenProject}
+            backgroundJobs={backgroundJobs}
+            onStartProcessing={startProcessingJob}
+          />
         )}
 
         {view === 'zone-wizard' && activeProject && (
@@ -322,10 +484,15 @@ export default function App() {
               matchSetup={matchSetup}
               clips={clips}
               onBack={handleBackFromExport}
+              backgroundJobs={backgroundJobs}
+              onStartExport={startExportJob}
             />
           </MatchProvider>
         )}
       </main>
+
+      {/* ── Background Jobs Bar (always visible when jobs exist) ─ */}
+      <BackgroundJobsBar jobs={backgroundJobs} onCancelJob={handleCancelJob} />
     </div>
   )
 }

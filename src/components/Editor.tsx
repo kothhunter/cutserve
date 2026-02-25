@@ -427,12 +427,17 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
       const result = await window.api.renderHighlights({ projectId: project.id, videoPath: project.videoPath, clipsPath: `${projectDir}/clips.json`, outputPath })
       if (!result.success) throw new Error(result.message)
       window.api.onRenderComplete(async (data) => {
+        if (data.projectId !== project.id) return
         await window.api.auth.recordExport()
         setExporting(false)
         alert(`Export complete!\n\nSaved to: ${data.outputPath}`)
         window.api.updateProject(project.id, { status: 'exported', finalVideo: data.outputPath })
       })
-      window.api.onRenderError((error)  => { setExporting(false); if (confirm(`Export failed: ${error}\n\nWould you like to retry?`)) handleExport() })
+      window.api.onRenderError((data) => {
+        if (data.projectId !== project.id) return
+        setExporting(false)
+        if (confirm(`Export failed: ${data.error}\n\nWould you like to retry?`)) handleExport()
+      })
     } catch (err) { alert(`Failed to start export: ${err}`); setExporting(false) }
   }
 

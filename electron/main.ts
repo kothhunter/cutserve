@@ -357,10 +357,13 @@ app.on('activate', () => {
 app.whenReady().then(async () => {
   // Register custom protocol to serve local files (requires registerSchemesAsPrivileged above for video streaming)
   protocol.registerFileProtocol('local-file', (request, callback) => {
-    const raw = decodeURIComponent(request.url.replace(/^local-file:\/\//, ''))
-    const pathPart = raw.startsWith('//') ? raw.slice(1) : raw
-    // Paths without leading slash (e.g. "users/foo/file.mp4") must be treated as absolute
-    const filePath = path.isAbsolute(pathPart) ? path.resolve(pathPart) : path.resolve('/', pathPart)
+    let raw = decodeURIComponent(request.url.replace(/^local-file:\/\//, ''))
+    // Strip leading slash(es) — on Windows URLs look like /C:/... which must become C:/...
+    raw = raw.replace(/^\/+/, '')
+    // On macOS/Linux paths are absolute from root, so re-add the leading slash
+    const filePath = process.platform === 'win32'
+      ? path.resolve(raw)
+      : path.resolve('/' + raw)
     console.log('[Protocol] Serving file:', filePath)
     callback({ path: filePath })
   })

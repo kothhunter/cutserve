@@ -45,7 +45,6 @@ function buildInitialState(setup: MatchSetup, firstClipId: string): RoundnetStat
   const serverId = setup.firstServerId
   const receiverId = setup.firstReceiverId
   const servingTeamId = getTeam(setup, serverId)
-  const receivingTeamId = getOtherTeam(servingTeamId)
 
   return {
     clipId: firstClipId,
@@ -61,32 +60,6 @@ function buildInitialState(setup: MatchSetup, firstClipId: string): RoundnetStat
   }
 }
 
-/** Build Equal serving rotation order: firstServer (right), partner (left), oppRight, oppLeft */
-function getRotationOrder(setup: MatchSetup): string[] {
-  const serverId = setup.firstServerId
-  const receiverId = setup.firstReceiverId
-  const serverPartner = getPartner(setup, serverId)
-  const receiverPartner = getPartner(setup, receiverId)
-  return [serverId, receiverPartner, serverPartner, receiverId]
-}
-
-/** Advance to next server in Equal mode: A->C->B->D->A */
-function nextInRotation(order: string[], currentIndex: number): number {
-  return (currentIndex + 1) % 4
-}
-
-/**
- * Equal serving: receiver depends on server index and first vs second serve.
- * Order [A, C, B, D] => A→D, C→B then C→A, B→D then B→C, D→A then D→B, A→C then repeat.
- * First serve: only index 0 (first server) uses +3; indices 1,2,3 use +1. Second serve: +3.
- */
-function getEqualReceiverIndex(serverIdx: number, isFirstServe: boolean): number {
-  if (isFirstServe) {
-    return serverIdx === 0 ? 3 : (serverIdx + 1) % 4
-  }
-  return (serverIdx + 3) % 4
-}
-
 function isPossessionChange(statType: StatType, involvedPlayers: string[] | undefined, servingTeamId: 'team1' | 'team2', setup: MatchSetup): boolean {
   switch (statType) {
     case 'double_fault':
@@ -100,6 +73,16 @@ function isPossessionChange(statType: StatType, involvedPlayers: string[] | unde
     default:
       return false
   }
+}
+
+/**
+ * Equal serving overtime is active when BOTH teams have reached the target score
+ * and the game is not yet decided by a 2‑point lead.
+ */
+function isEqualOvertime(targetScore: number, team1Score: number, team2Score: number): boolean {
+  if (!targetScore || targetScore <= 0) return false
+  if (team1Score < targetScore || team2Score < targetScore) return false
+  return Math.abs(team1Score - team2Score) < 2
 }
 
 function getPointWinner(
@@ -129,10 +112,6 @@ function getPointWinner(
   }
 }
 
-function isBreak(statType: StatType): boolean {
-  return statType === 'ace' || statType === 'service_break' || statType === 'def_break'
-}
-
 export function calculateMatchFlow(
   setup: MatchSetup,
   clips: ClipLike[]
@@ -146,9 +125,48 @@ export function calculateMatchFlow(
   const firstClipId = String(firstClip.id ?? 0)
   let state = buildInitialState(setup, firstClipId)
 
-  const rotationOrder = getRotationOrder(setup)
-  const isTiebreak = () => state.team1Score === 20 && state.team2Score === 20
-  let firstServeDone = false
+  // Precompute Equal serving cycles when using Equal style
+  const useEqual = setup.servingStyle === 'equal'
+  type Pair = { serverId: string; receiverId: string }
+  let equalBaseCycle: Pair[] = []
+  let equalOvertimeCycle: Pair[] = []
+  let equalCycleIndex = 0
+
+  if (useEqual) {
+    const A = setup.firstServerId
+    const D = setup.firstReceiverId
+    const C = getPartner(setup, D)
+    const B = getPartner(setup, A)
+
+    // Regular Equal cycle (8 serves): A-D, C-B, C-A, B-D, B-C, D-A, D-B, A-C
+    equalBaseCycle = [
+      { serverId: A, receiverId: D },
+      { serverId: C, receiverId: B },
+      { serverId: C, receiverId: A },
+      { serverId: B, receiverId: D },
+      { serverId: B, receiverId: C },
+      { serverId: D, receiverId: A },
+      { serverId: D, receiverId: B },
+      { serverId: A, receiverId: C },
+    ]
+
+    // Overtime cycle (4 serves): A-D, D-A, B-C, C-B
+    equalOvertimeCycle = [
+      { serverId: A, receiverId: D },
+      { serverId: D, receiverId: A },
+      { serverId: B, receiverId: C },
+      { serverId: C, receiverId: B },
+    ]
+
+    // Ensure initial state matches the first pair of the Equal cycle
+    state.servingTeamId = getTeam(setup, A)
+    state.serverPlayerId = A
+    state.receiverPlayerId = D
+    state.serverPosition = 'right'
+    state.receiverPosition = 'left'
+    state.rotationIndex = equalCycleIndex
+    state.currentServeCount = 0
+  }
 
   for (let i = 0; i < keptClips.length; i++) {
     const clip = keptClips[i]
@@ -161,8 +179,6 @@ export function calculateMatchFlow(
     const servingTeamId = state.servingTeamId
     const receivingTeamId = getOtherTeam(servingTeamId)
     const pointWinner = getPointWinner(statType, clip.involvedPlayers, servingTeamId, receivingTeamId, setup)
-    const possessionChange = isPossessionChange(statType, clip.involvedPlayers, servingTeamId, setup)
-    const isBreakEvent = isBreak(statType)
 
     // Update score first
     let nextTeam1Score = state.team1Score
@@ -228,72 +244,50 @@ export function calculateMatchFlow(
         receiverPosition: nextReceiverPosition,
       }
     } else {
-      const atTiebreak = isTiebreak()
-      if (atTiebreak) {
-        if (possessionChange || pointWinner) {
-          const nextIdx = nextInRotation(rotationOrder, state.rotationIndex)
-          const nextServerId = rotationOrder[nextIdx]
-          const nextServerTeam = getTeam(setup, nextServerId)
-          const nextReceiverId = rotationOrder[getEqualReceiverIndex(nextIdx, true)]
-          state = {
-            ...state,
-            clipId,
-            team1Score: nextTeam1Score,
-            team2Score: nextTeam2Score,
-            servingTeamId: nextServerTeam,
-            serverPlayerId: nextServerId,
-            receiverPlayerId: nextReceiverId,
-            rotationIndex: nextIdx,
-            currentServeCount: 0,
-          }
-        } else {
-          state = { ...state, clipId, team1Score: nextTeam1Score, team2Score: nextTeam2Score }
+      // Equal serving: fixed cycles of server/receiver pairs, independent of point outcome
+      const targetScore = setup.targetScore
+      const inOvertime = isEqualOvertime(targetScore, nextTeam1Score, nextTeam2Score)
+      const cycle = inOvertime ? equalOvertimeCycle : equalBaseCycle
+      const cycleLength = cycle.length
+
+      if (cycleLength === 0) {
+        // Safety fallback: no Equal cycle defined, just carry score forward
+        state = {
+          ...state,
+          clipId,
+          team1Score: nextTeam1Score,
+          team2Score: nextTeam2Score,
+        }
+      } else if (statType === 'none') {
+        // Clips with no stat should NOT advance the Equal rotation.
+        // Keep the same server/receiver, only carry score (which will be unchanged).
+        state = {
+          ...state,
+          clipId,
+          team1Score: nextTeam1Score,
+          team2Score: nextTeam2Score,
         }
       } else {
-        const isFirstServeOfMatch = !firstServeDone && state.rotationIndex === 0
-        const servesDone = (isFirstServeOfMatch ? 0 : state.currentServeCount) + 1
-        const maxServes = isFirstServeOfMatch ? 1 : 2
+        // Advance to next server/receiver pair only when a real stat is present
+        equalCycleIndex = (equalCycleIndex + 1) % cycleLength
+        const pair = cycle[equalCycleIndex]
+        const nextServerId = pair.serverId
+        const nextReceiverId = pair.receiverId
+        const nextServingTeamId = getTeam(setup, nextServerId)
 
-        if (pointWinner !== null || possessionChange) {
-          if (servesDone >= maxServes) {
-            firstServeDone = true
-            const nextIdx = nextInRotation(rotationOrder, state.rotationIndex)
-            const nextServerId = rotationOrder[nextIdx]
-            const nextServerTeam = getTeam(setup, nextServerId)
-            const nextReceiverId = rotationOrder[getEqualReceiverIndex(nextIdx, true)]
-            const nextServerPosition = nextIdx === 0 ? 'right' : nextIdx === 1 ? 'left' : nextIdx === 2 ? 'left' : 'right'
-            const nextReceiverPosition = nextServerPosition === 'right' ? 'left' : 'right'
-
-            state = {
-              ...state,
-              clipId,
-              team1Score: nextTeam1Score,
-              team2Score: nextTeam2Score,
-              servingTeamId: nextServerTeam,
-              serverPlayerId: nextServerId,
-              receiverPlayerId: nextReceiverId,
-              serverPosition: nextServerPosition,
-              receiverPosition: nextReceiverPosition,
-              rotationIndex: nextIdx,
-              currentServeCount: 0,
-            }
-          } else if (!atTiebreak && !isFirstServeOfMatch) {
-            const nextReceiverId = rotationOrder[getEqualReceiverIndex(state.rotationIndex, false)]
-            state = {
-              ...state,
-              clipId,
-              team1Score: nextTeam1Score,
-              team2Score: nextTeam2Score,
-              currentServeCount: servesDone,
-              serverPosition: state.serverPosition === 'right' ? 'left' : 'right',
-              receiverPlayerId: nextReceiverId,
-              receiverPosition: state.receiverPosition === 'right' ? 'left' : 'right',
-            }
-          } else {
-            state = { ...state, clipId, team1Score: nextTeam1Score, team2Score: nextTeam2Score }
-          }
-        } else {
-          state = { ...state, clipId, team1Score: nextTeam1Score, team2Score: nextTeam2Score }
+        state = {
+          ...state,
+          clipId,
+          team1Score: nextTeam1Score,
+          team2Score: nextTeam2Score,
+          servingTeamId: nextServingTeamId,
+          serverPlayerId: nextServerId,
+          receiverPlayerId: nextReceiverId,
+          // Positions are not used to drive Equal logic; keep a simple convention.
+          serverPosition: 'right',
+          receiverPosition: 'left',
+          rotationIndex: equalCycleIndex,
+          currentServeCount: 0,
         }
       }
     }
@@ -306,4 +300,25 @@ export function calculateMatchFlow(
   }
 
   return result
+}
+
+/**
+ * Small debug helper: generate the sequence of server/receiver pairs for Equal serving.
+ * Useful for manually verifying Equal and overtime cycles.
+ */
+export function __debugEqualCycleOrder(setup: MatchSetup, numPoints: number): Array<{ server: string; receiver: string }> {
+  const clips: ClipLike[] = []
+  for (let i = 0; i < numPoints; i++) {
+    clips.push({ id: i + 1, statType: 'none', status: 'done', keep: true })
+  }
+  const flow = calculateMatchFlow({ ...setup, servingStyle: 'equal' }, clips)
+  const sequence: Array<{ server: string; receiver: string }> = []
+  for (const clip of clips) {
+    const id = String(clip.id ?? 0)
+    const state = flow.get(id)
+    if (state) {
+      sequence.push({ server: state.serverPlayerId, receiver: state.receiverPlayerId })
+    }
+  }
+  return sequence
 }

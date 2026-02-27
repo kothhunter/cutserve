@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Project, Clip } from '../App'
 import { useMatchContext } from '../context/MatchContext'
+import { toVideoUrl } from '../utils/video-url'
 import { UpgradeModal } from './UpgradeModal'
 import { ProjectSettingsModal } from './ProjectSettingsModal'
 
@@ -549,7 +550,7 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
             <div className="relative w-full h-full flex items-center justify-center bg-black rounded-xl border border-cut-warm/10 overflow-hidden min-h-[300px]">
               <video
                 ref={videoRef}
-                src={project.videoPath ? `local-file://${project.videoPath}` : undefined}
+                src={project.videoPath ? toVideoUrl(project.videoPath) : undefined}
                 onLoadedMetadata={handleVideoLoaded}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}

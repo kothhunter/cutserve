@@ -8,6 +8,7 @@ import { StatTable } from '../components/StatTable'
 import { StatOverlay } from '../components/StatOverlay'
 import { useMatchContext } from '../context/MatchContext'
 import { calculateStats } from '../core/stats'
+import { toVideoUrl } from '../utils/video-url'
 
 type TemplateId = 'minimal' | 'names' | 'custom'
 type Variant = 'top-middle' | 'top-corners' | 'stacked'
@@ -513,7 +514,7 @@ export function Export({ project, matchSetup, clips, onBack, backgroundJobs, onS
             {/* Layer 1: Video */}
             <video
               ref={videoRef}
-              src={project.videoPath ? `local-file://${project.videoPath}` : undefined}
+              src={project.videoPath ? toVideoUrl(project.videoPath) : undefined}
               className="absolute inset-0 w-full h-full object-contain bg-black cursor-pointer"
               muted
               loop

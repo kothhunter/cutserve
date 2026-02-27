@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import type { Project } from '../App'
+import { toVideoUrl } from '../utils/video-url'
 
 interface Point { x: number; y: number }
 interface Zone  { points: Point[]; completed: boolean }
@@ -229,7 +230,7 @@ export function ZoneWizard({ project, onComplete }: ZoneWizardProps) {
         >
           <video
             ref={videoRef}
-            src={project.videoPath ? `local-file://${project.videoPath}` : undefined}
+            src={project.videoPath ? toVideoUrl(project.videoPath) : undefined}
             className="max-w-full max-h-full"
             muted
           />

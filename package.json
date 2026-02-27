@@ -1,7 +1,7 @@
 {
   "name": "cut-serve",
   "productName": "CutServe",
-  "version": "1.0.0-beta.22",
+  "version": "1.0.0-beta.23",
   "description": "CutServe – Cut and serve roundnet highlight reels",
   "type": "module",
   "main": "dist-electron/main.js",

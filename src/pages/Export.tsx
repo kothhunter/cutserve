@@ -520,7 +520,10 @@ export function Export({ project, matchSetup, clips, onBack, backgroundJobs, onS
               loop
               playsInline
               autoPlay
-              onError={(e) => console.error('Video load error:', e)}
+              onError={(e) => {
+                const el = e.currentTarget
+                console.error('[Export] Video load error:', { code: el.error?.code, msg: el.error?.message, src: el.src })
+              }}
               onClick={() => videoRef.current?.paused ? videoRef.current.play() : videoRef.current?.pause()}
             />
             {!project.videoPath && (

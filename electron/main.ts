@@ -61,7 +61,7 @@ function createWindow() {
     minHeight: 700,
     title: 'CutServe',
     backgroundColor: '#020617',
-    titleBarStyle: 'hiddenInset',
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const } : {}),
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -364,7 +364,11 @@ app.whenReady().then(async () => {
     const filePath = process.platform === 'win32'
       ? path.resolve(raw)
       : path.resolve('/' + raw)
-    console.log('[Protocol] Serving file:', filePath)
+    const fileExists = existsSync(filePath)
+    console.log('[Protocol] Serving file:', filePath, '| exists:', fileExists)
+    if (!fileExists) {
+      console.error('[Protocol] File not found:', filePath, '| raw URL:', request.url)
+    }
     callback({ path: filePath })
   })
 

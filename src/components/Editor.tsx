@@ -554,7 +554,12 @@ export function Editor({ project, clips, onClipsChange, onOpenExportStudio, onPr
                 onLoadedMetadata={handleVideoLoaded}
                 onPlay={() => setIsPlaying(true)}
                 onPause={() => setIsPlaying(false)}
-                onError={(e) => console.error('Video load error:', e)}
+                onError={(e) => {
+                  const el = e.currentTarget
+                  const code = el.error?.code
+                  const msg = el.error?.message || 'Unknown error'
+                  console.error('[Editor] Video load error:', { code, msg, src: el.src })
+                }}
                 onClick={handlePlayPause}
                 className="max-w-full max-h-full cursor-pointer"
               />

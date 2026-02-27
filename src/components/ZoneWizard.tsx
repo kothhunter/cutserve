@@ -21,15 +21,17 @@ export function ZoneWizard({ project, onComplete }: ZoneWizardProps) {
   const [currentZone, setCurrentZone] = useState<Point[]>([])
   const [canvasSize, setCanvasSize]   = useState({ width: 0, height: 0 })
   const [saving, setSaving]           = useState(false)
+  const [videoError, setVideoError]   = useState<string | null>(null)
 
   const maxScrubTime     = Math.min(duration, 600)
   const completedZones   = zones.filter(z => z.completed).length
 
   // ── Canvas size sync with video ─────────────────────────────────
   useEffect(() => {
+    const video = videoRef.current
     const updateCanvasSize = () => {
-      if (videoRef.current && canvasRef.current) {
-        const rect = videoRef.current.getBoundingClientRect()
+      if (video && canvasRef.current) {
+        const rect = video.getBoundingClientRect()
         canvasRef.current.width  = rect.width
         canvasRef.current.height = rect.height
         setCanvasSize({ width: rect.width, height: rect.height })
@@ -38,15 +40,19 @@ export function ZoneWizard({ project, onComplete }: ZoneWizardProps) {
 
     const handleLoadedMetadata = () => {
       updateCanvasSize()
-      if (videoRef.current) {
-        setDuration(videoRef.current.duration)
-        videoRef.current.currentTime = 120
+      if (video) {
+        setDuration(video.duration)
+        video.currentTime = 120
+        setVideoError(null)
       }
     }
 
-    videoRef.current?.addEventListener('loadedmetadata', handleLoadedMetadata)
+    video?.addEventListener('loadedmetadata', handleLoadedMetadata)
     window.addEventListener('resize', updateCanvasSize)
-    return () => window.removeEventListener('resize', updateCanvasSize)
+    return () => {
+      video?.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      window.removeEventListener('resize', updateCanvasSize)
+    }
   }, [])
 
   // ── Redraw whenever zones change ────────────────────────────────
@@ -233,6 +239,17 @@ export function ZoneWizard({ project, onComplete }: ZoneWizardProps) {
             src={project.videoPath ? toVideoUrl(project.videoPath) : undefined}
             className="max-w-full max-h-full"
             muted
+            onError={(e) => {
+              const el = e.currentTarget
+              const code = el.error?.code
+              const msg = el.error?.message || 'Unknown error'
+              console.error('[ZoneWizard] Video load error:', { code, msg, src: el.src })
+              if (code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+                setVideoError('This video format is not supported. iPhone videos recorded in HEVC (H.265) may not play on Windows. Try converting to H.264 with HandBrake or VLC first.')
+              } else {
+                setVideoError(`Video failed to load (error ${code}): ${msg}`)
+              }
+            }}
           />
           <canvas
             ref={canvasRef}
@@ -254,6 +271,16 @@ export function ZoneWizard({ project, onComplete }: ZoneWizardProps) {
           <div className="absolute top-3 right-3 bg-black/70 text-cut-base px-3 py-1.5 rounded-lg text-xs font-medium">
             {completedZones}/4 zones
           </div>
+
+          {/* Video error banner */}
+          {videoError && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/80 z-10">
+              <div className="max-w-md mx-4 bg-red-900/90 border border-red-500/50 text-white rounded-xl p-5 text-center">
+                <p className="text-sm font-semibold mb-2">Video could not be loaded</p>
+                <p className="text-xs text-red-200 leading-relaxed">{videoError}</p>
+              </div>
+            </div>
+          )}
 
           {/* All done banner */}
           {completedZones === 4 && (

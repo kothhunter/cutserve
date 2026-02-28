@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, shell, dialog } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, shell, dialog, net } from 'electron'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import fs from 'fs/promises'
@@ -356,7 +356,8 @@ app.on('activate', () => {
 
 app.whenReady().then(async () => {
   // Register custom protocol to serve local files (requires registerSchemesAsPrivileged above for video streaming)
-  protocol.registerFileProtocol('local-file', (request, callback) => {
+  // Uses the modern protocol.handle API (registerFileProtocol is deprecated since Electron 25)
+  protocol.handle('local-file', (request) => {
     let raw = decodeURIComponent(request.url.replace(/^local-file:\/\//, ''))
     // Strip leading slash(es) — on Windows URLs look like /C:/... which must become C:/...
     raw = raw.replace(/^\/+/, '')
@@ -364,12 +365,10 @@ app.whenReady().then(async () => {
     const filePath = process.platform === 'win32'
       ? path.resolve(raw)
       : path.resolve('/' + raw)
-    const fileExists = existsSync(filePath)
-    console.log('[Protocol] Serving file:', filePath, '| exists:', fileExists)
-    if (!fileExists) {
-      console.error('[Protocol] File not found:', filePath, '| raw URL:', request.url)
-    }
-    callback({ path: filePath })
+    console.log('[Protocol] Serving file:', filePath, '| exists:', existsSync(filePath))
+    // Convert to a file:// URL that net.fetch can serve (handles MIME types, range requests, etc.)
+    const fileUrl = 'file://' + (process.platform === 'win32' ? '/' : '') + filePath.replace(/\\/g, '/')
+    return net.fetch(fileUrl)
   })
 
   await projectManager.init()
